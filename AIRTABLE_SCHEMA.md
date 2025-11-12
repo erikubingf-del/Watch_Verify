@@ -103,6 +103,7 @@ This document describes the complete Airtable base structure required for Watch 
 | `direction` | Single select | ✅ | "inbound" or "outbound" |
 | `media_url` | URL | ❌ | Media attachment URL (photos, docs) |
 | `created_at` | Date & time | ✅ | Message timestamp |
+| `deleted_at` | Date & time | ❌ | LGPD soft-delete timestamp (cascade from customer) |
 
 **Single Select Options for `direction`:**
 - inbound
@@ -142,6 +143,7 @@ This document describes the complete Airtable base structure required for Watch 
 | `invoice_url` | URL | ❌ | Invoice/receipt photo URL |
 | `notes` | Long text | ❌ | Internal notes |
 | `created_at` | Date & time | ✅ | Verification request date |
+| `deleted_at` | Date & time | ❌ | LGPD soft-delete timestamp (cascade from customer) |
 
 **Single Select Options for `status`:**
 - pending
