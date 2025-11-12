@@ -9,7 +9,8 @@
     "lint": "next lint",
     "hash-password": "tsx scripts/hash-password.ts",
     "audit-security": "tsx scripts/security-audit.ts",
-    "sync-catalog": "tsx scripts/sync-catalog.ts"
+    "sync-catalog": "tsx scripts/sync-catalog.ts",
+    "test-rag": "tsx scripts/test-rag-mock.ts"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.7",
