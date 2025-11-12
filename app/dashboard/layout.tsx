@@ -10,26 +10,56 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/login')
   }
 
+  const navItems = [
+    { href: '/dashboard', label: 'Home', icon: '🏠' },
+    { href: '/dashboard/catalog', label: 'Catálogo', icon: '📦' },
+    { href: '/dashboard/verifications', label: 'Verificações', icon: '✅' },
+    { href: '/dashboard/analytics', label: 'Analytics', icon: '📊' },
+    { href: '/dashboard/customers', label: 'Clientes', icon: '👤' },
+    { href: '/dashboard/messages', label: 'Mensagens', icon: '💬' },
+    { href: '/dashboard/settings', label: 'Configurações', icon: '⚙️' },
+  ]
+
   return (
-    <div style={{display:'grid', gridTemplateColumns:'260px 1fr', minHeight:'100vh'}}>
-      <aside style={{borderRight:'1px solid #1f2937', padding:'24px', background:'#0b0f1a', display:'flex', flexDirection:'column'}}>
-        <div style={{flex: 1}}>
-          <h2 style={{fontWeight:700, fontSize:18, marginBottom:8}}>Watch Verify</h2>
-          <p style={{opacity:.6, fontSize:12, marginBottom:24}}>Concierge & Verificação</p>
-          <nav style={{display:'grid', gap:10}}>
-            <Link href="/dashboard/watch-verify">✅ Watch Verify</Link>
-            <Link href="/dashboard/customers">👤 Customers</Link>
-            <Link href="/dashboard/reports">📈 Reports</Link>
-            <Link href="/dashboard/settings">⚙️ Settings</Link>
-          </nav>
+    <div className="flex min-h-screen bg-zinc-950">
+      {/* Sidebar */}
+      <aside className="w-64 border-r border-zinc-800 bg-zinc-900 flex flex-col">
+        {/* Header */}
+        <div className="p-6 border-b border-zinc-800">
+          <h2 className="text-xl font-bold text-white">Watch Verify</h2>
+          <p className="text-sm text-zinc-400 mt-1">Admin Dashboard</p>
         </div>
-        <div style={{marginTop: 'auto', paddingTop: 24, borderTop: '1px solid #1f2937'}}>
-          <p style={{fontSize: 12, opacity: 0.6, marginBottom: 8}}>{session.user?.name}</p>
-          <p style={{fontSize: 11, opacity: 0.4, marginBottom: 12}}>{session.user?.email}</p>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-4 space-y-1">
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              <span className="text-lg">{item.icon}</span>
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </nav>
+
+        {/* User Info */}
+        <div className="p-4 border-t border-zinc-800">
+          <div className="mb-3">
+            <p className="text-sm font-medium text-white">{session.user?.name}</p>
+            <p className="text-xs text-zinc-500 mt-0.5">{session.user?.email}</p>
+          </div>
           <LogoutButton />
         </div>
       </aside>
-      <main style={{padding:'24px'}}>{children}</main>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto">
+        <div className="p-8">
+          {children}
+        </div>
+      </main>
     </div>
   )
 }
