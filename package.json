@@ -6,19 +6,31 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "hash-password": "tsx scripts/hash-password.ts"
   },
   "dependencies": {
+    "@upstash/ratelimit": "^2.0.7",
+    "@upstash/redis": "^1.35.6",
+    "bcryptjs": "^3.0.3",
     "next": "14.2.5",
+    "next-auth": "^5.0.0-beta.30",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "twilio": "^5.10.5",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "20.11.30",
     "@types/react": "18.2.79",
     "@types/react-dom": "18.2.25",
-    "typescript": "5.4.5",
+    "autoprefixer": "^10.4.22",
     "eslint": "8.57.0",
-    "eslint-config-next": "14.2.5"
+    "eslint-config-next": "14.2.5",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.17",
+    "tsx": "^4.20.6",
+    "typescript": "5.4.5"
   }
 }
