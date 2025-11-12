@@ -10,12 +10,14 @@
     "hash-password": "tsx scripts/hash-password.ts",
     "audit-security": "tsx scripts/security-audit.ts",
     "sync-catalog": "tsx scripts/sync-catalog.ts",
-    "test-rag": "tsx scripts/test-rag-mock.ts"
+    "test-rag": "tsx scripts/test-rag-mock.ts",
+    "demo-rag": "tsx scripts/demo-rag-architecture.ts"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.7",
     "@upstash/redis": "^1.35.6",
     "bcryptjs": "^3.0.3",
+    "dotenv": "^17.2.3",
     "next": "14.2.5",
     "next-auth": "^5.0.0-beta.30",
     "react": "18.3.1",

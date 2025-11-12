@@ -5,6 +5,11 @@
  * Run: npm run test-rag
  */
 
+// Load environment variables
+import { config } from 'dotenv'
+import { resolve } from 'path'
+config({ path: resolve(process.cwd(), '.env.local') })
+
 import { MOCK_CATALOG, getMockCatalog } from '@/lib/mock-catalog'
 import {
   generateEmbedding,
