@@ -59,6 +59,8 @@ export const aiResponderSchema = z.object({
       content: z.string().min(1),
     })
   ).min(1),
+  tenantId: z.string().optional(),
+  customerPhone: phoneSchema.optional(),
 })
 
 // Index/embedding schema

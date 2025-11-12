@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "hash-password": "tsx scripts/hash-password.ts",
-    "audit-security": "tsx scripts/security-audit.ts"
+    "audit-security": "tsx scripts/security-audit.ts",
+    "sync-catalog": "tsx scripts/sync-catalog.ts"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.7",

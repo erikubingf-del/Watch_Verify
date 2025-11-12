@@ -12,6 +12,7 @@ import {
   clearVerificationSession,
   runVerification,
 } from '@/lib/verification'
+import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
 
 // Twilio sends x-www-form-urlencoded; parse using formData() in Next.js
 export async function POST(req: NextRequest) {
@@ -165,18 +166,50 @@ export async function POST(req: NextRequest) {
         responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
       }
     } else {
-      // Step 6: Regular conversation (not verification)
-      responseMessage = await chat(
-        [
-          {
-            role: 'system',
-            content:
-              'Você é um concierge humano, educado e objetivo. Se o cliente pedir verificação de relógio, explique os passos e peça confirmação antes de iniciar.',
-          },
-          { role: 'user', content: body },
-        ],
-        0.65
-      )
+      // Step 6: Regular conversation with RAG (product recommendations)
+      try {
+        // Build RAG context with semantic search
+        const ragContext = await buildRAGContext(body, {
+          tenantId,
+          customerPhone: wa,
+          includeConversationHistory: true,
+          maxHistoryMessages: 10,
+        })
+
+        // Generate AI response with catalog context
+        responseMessage = await chat(
+          [
+            {
+              role: 'system',
+              content: ragContext.systemPrompt,
+            },
+            { role: 'user', content: body },
+          ],
+          0.65
+        )
+
+        // Optionally append product recommendations in structured format
+        if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
+          logInfo('whatsapp-rag-recommendation', {
+            phone: wa,
+            productsFound: ragContext.relevantProducts.length,
+          })
+        }
+      } catch (error: any) {
+        // Fallback to basic conversation if RAG fails
+        logError('whatsapp-rag', error, { phone: wa })
+        responseMessage = await chat(
+          [
+            {
+              role: 'system',
+              content:
+                'Você é um concierge humano, educado e objetivo. Se o cliente pedir verificação de relógio, explique os passos e peça confirmação antes de iniciar.',
+            },
+            { role: 'user', content: body },
+          ],
+          0.65
+        )
+      }
     }
 
     // Step 7: Log outbound message
