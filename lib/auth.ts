@@ -12,36 +12,50 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
+        console.log('🔐 Login attempt for:', credentials?.email)
+
         if (!credentials?.email || !credentials?.password) {
+          console.log('❌ Missing credentials')
           return null
         }
 
         try {
           // Query Airtable Users table
+          console.log('📋 Querying Airtable Users table...')
           const users = await atSelect('Users', {
             filterByFormula: `({email}='${String(credentials.email).replace(/'/g, "\\'")}')`,
           })
 
           if (!users.length) {
+            console.log('❌ No user found with email:', credentials.email)
             return null
           }
 
           const user = users[0]
+          console.log('✅ User found:', user.fields.email)
+          console.log('   Active:', user.fields.active)
+          console.log('   Has password_hash:', !!user.fields.password_hash)
+          console.log('   Tenant ID:', user.fields.tenant_id)
 
           // Check if user is active
           if (!user.fields.active) {
+            console.log('❌ User is not active')
             return null
           }
 
           // Verify password
+          console.log('🔑 Verifying password...')
           const passwordMatch = await bcrypt.compare(
             String(credentials.password),
             user.fields.password_hash as string
           )
 
           if (!passwordMatch) {
+            console.log('❌ Password does not match')
             return null
           }
+
+          console.log('✅ Password match! Login successful')
 
           // Return user object (will be stored in JWT)
           return {
@@ -52,7 +66,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             role: user.fields.role as string,
           }
         } catch (error) {
-          console.error('Auth error:', error)
+          console.error('❌ Auth error:', error)
           return null
         }
       },
