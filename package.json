@@ -12,7 +12,8 @@
     "sync-catalog": "tsx scripts/sync-catalog.ts",
     "test-rag": "tsx scripts/test-rag-mock.ts",
     "demo-rag": "tsx scripts/demo-rag-architecture.ts",
-    "test-auth": "tsx scripts/test-airtable-auth.ts"
+    "test-auth": "tsx scripts/test-airtable-auth.ts",
+    "debug-env": "tsx scripts/debug-env.ts"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.7",
