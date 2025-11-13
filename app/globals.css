@@ -4,10 +4,11 @@
 
 @layer base {
   * {
-    @apply border-zinc-800;
+    border-color: rgb(39 39 42 / 1);
   }
   body {
-    @apply bg-[#0a0a0a] text-[#e5e5e5];
+    background-color: #0a0a0a;
+    color: #e5e5e5;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
