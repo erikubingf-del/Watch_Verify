@@ -1,13 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: rgb(39 39 42);
   }
   body {
-    @apply bg-[#0a0a0a] text-[#e5e5e5];
+    background-color: #0a0a0a;
+    color: #e5e5e5;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
