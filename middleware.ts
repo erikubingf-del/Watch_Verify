@@ -24,6 +24,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Allow access to dashboard routes if this is a redirect from auth
+  // NextAuth will set the session cookie during the redirect flow
+  const isAuthRedirect = req.nextUrl.searchParams.has('callbackUrl') ||
+                         req.headers.get('referer')?.includes('/api/auth/')
+  if (isAuthRedirect && pathname.startsWith('/dashboard')) {
+    return NextResponse.next()
+  }
+
   let tenantId: string | null = null
 
   // Strategy 1: Extract from session cookie (for dashboard routes)

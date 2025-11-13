@@ -26,7 +26,8 @@ export default function LoginPage() {
       if (result?.error) {
         setError('Email ou senha incorretos')
       } else if (result?.ok) {
-        router.push('/dashboard/watch-verify')
+        // Redirect to dashboard (NextAuth redirect callback will handle the actual URL)
+        window.location.href = '/dashboard'
       }
     } catch (err) {
       setError('Erro ao fazer login. Tente novamente.')
