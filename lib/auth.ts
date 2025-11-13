@@ -93,6 +93,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // Redirect to dashboard after successful login
       console.log('🔀 Redirect callback:', { url, baseUrl })
 
+      // Always redirect to dashboard after login
+      // Avoid redirecting back to login page
+      if (url.includes('/login') || url === baseUrl) {
+        console.log('   → Redirecting to /dashboard')
+        return `${baseUrl}/dashboard`
+      }
+
       // If the url is relative (starts with /), append to baseUrl
       if (url.startsWith('/')) {
         return `${baseUrl}${url}`
