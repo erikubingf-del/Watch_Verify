@@ -37,9 +37,15 @@ export async function middleware(req: NextRequest) {
   // Strategy 1: Extract from session cookie (for dashboard routes)
   if (pathname.startsWith('/dashboard')) {
     const sessionCookie = req.cookies.get('next-auth.session-token') || req.cookies.get('__Secure-next-auth.session-token')
+    console.log('🔒 Middleware - Dashboard access:', {
+      pathname,
+      hasSessionCookie: !!sessionCookie,
+      cookieName: sessionCookie ? 'found' : 'missing'
+    })
 
     if (!sessionCookie) {
       // Redirect to login if no session
+      console.log('❌ Middleware - No session cookie, redirecting to /login')
       return NextResponse.redirect(new URL('/login', req.url))
     }
 

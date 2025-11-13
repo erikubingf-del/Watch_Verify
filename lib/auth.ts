@@ -76,6 +76,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       // Add custom fields to JWT on sign in
       if (user) {
+        console.log('🔑 JWT callback - Adding user to token:', { email: user.email, tenantId: user.tenantId })
         token.tenantId = user.tenantId
         token.role = user.role
       }
@@ -83,10 +84,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       // Add custom fields to session from JWT
+      console.log('📝 Session callback - Creating session for:', token.email)
       if (session.user) {
         session.user.tenantId = token.tenantId as string
         session.user.role = token.role as string
       }
+      console.log('📝 Session created:', { email: session.user?.email, hasTenantId: !!session.user?.tenantId })
       return session
     },
     async redirect({ url, baseUrl }) {
