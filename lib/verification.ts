@@ -1,13 +1,16 @@
 import { calcICD, ICDInput } from '@/utils/icdCalculator'
 import { analyzeWatchPhoto, analyzeGuaranteeCard, analyzeInvoice, compareDocuments } from './vision'
 import { lookupWatch, verifyDealer, validatePrice } from './chrono24'
-import { atCreate, atUpdate } from '@/utils/airtable'
-import { logInfo, logError } from './logger'
+import { atCreate } from '@/utils/airtable'
+import { logInfo, logError, logWarn } from './logger'
 import { sendAlertToMake } from '@/utils/alertHandler'
+import { uploadVerificationDocuments, isCloudinaryConfigured } from './cloudinary'
 
 /**
  * Complete watch verification workflow
  * Integrates document analysis, market data, and ICD calculation
+ *
+ * Note: Session management has been moved to ./verification-sessions.ts
  */
 
 export interface VerificationRequest {
@@ -41,6 +44,30 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
   logInfo('verification', `Starting verification for ${request.customerName}`)
 
   try {
+    // Step 0: Upload media to Cloudinary for permanent storage
+    let permanentUrls = {
+      watchPhoto: request.watchPhotoUrl,
+      guaranteeCard: request.guaranteeCardUrl,
+      invoice: request.invoiceUrl,
+    }
+
+    if (isCloudinaryConfigured()) {
+      try {
+        logInfo('verification', 'Uploading documents to Cloudinary')
+        permanentUrls = await uploadVerificationDocuments({
+          watchPhotoUrl: request.watchPhotoUrl,
+          guaranteeCardUrl: request.guaranteeCardUrl,
+          invoiceUrl: request.invoiceUrl,
+        })
+        logInfo('verification', 'Documents uploaded to Cloudinary successfully')
+      } catch (error: any) {
+        logWarn('verification', 'Failed to upload to Cloudinary, using Twilio URLs', { error: error.message })
+        // Continue with Twilio URLs (will expire in 24h)
+      }
+    } else {
+      logWarn('verification', 'Cloudinary not configured, using Twilio URLs (expire in 24h)')
+    }
+
     // Step 1: Analyze all documents
     const watchAnalysis = request.watchPhotoUrl
       ? await analyzeWatchPhoto(request.watchPhotoUrl)
@@ -135,7 +162,7 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
       recommendations.push('Verify seller authorization with brand directly')
     }
 
-    // Step 9: Save to Airtable
+    // Step 9: Save to Airtable with permanent URLs
     const verification = await atCreate('WatchVerify', {
       tenant_id: request.tenantId,
       customer: request.customerName,
@@ -146,9 +173,9 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
       serial: watchAnalysis?.serial || guaranteeAnalysis?.serial || '',
       icd,
       status,
-      photo_url: request.watchPhotoUrl || '',
-      guarantee_url: request.guaranteeCardUrl || '',
-      invoice_url: request.invoiceUrl || '',
+      photo_url: permanentUrls.watchPhoto || '',
+      guarantee_url: permanentUrls.guaranteeCard || '',
+      invoice_url: permanentUrls.invoice || '',
       notes: issues.join('\n'),
       created_at: new Date().toISOString(),
     })
@@ -192,124 +219,14 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
   }
 }
 
-/**
- * State machine for multi-step verification workflow
- */
-export interface VerificationSession {
-  id: string
-  tenantId: string
-  customerPhone: string
-  customerName: string
-  state:
-    | 'awaiting_watch_photo'
-    | 'awaiting_guarantee'
-    | 'awaiting_invoice'
-    | 'processing'
-    | 'completed'
-  watchPhotoUrl?: string
-  guaranteeCardUrl?: string
-  invoiceUrl?: string
-  createdAt: string
-  updatedAt: string
-}
-
-// In-memory session store (TODO: Move to Redis or Airtable for production)
-const sessions = new Map<string, VerificationSession>()
-
-/**
- * Create new verification session
- */
-export function createVerificationSession(
-  tenantId: string,
-  customerPhone: string,
-  customerName: string
-): VerificationSession {
-  const session: VerificationSession = {
-    id: crypto.randomUUID(),
-    tenantId,
-    customerPhone,
-    customerName,
-    state: 'awaiting_watch_photo',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-
-  sessions.set(customerPhone, session)
-  logInfo('verification-session', `Created session for ${customerPhone}`)
-  return session
-}
-
-/**
- * Get existing session
- */
-export function getVerificationSession(customerPhone: string): VerificationSession | null {
-  return sessions.get(customerPhone) || null
-}
-
-/**
- * Update session with new document
- */
-export function updateVerificationSession(
-  customerPhone: string,
-  documentType: 'watch' | 'guarantee' | 'invoice',
-  documentUrl: string
-): VerificationSession | null {
-  const session = sessions.get(customerPhone)
-  if (!session) return null
-
-  // Update document URL
-  if (documentType === 'watch') {
-    session.watchPhotoUrl = documentUrl
-    session.state = 'awaiting_guarantee'
-  } else if (documentType === 'guarantee') {
-    session.guaranteeCardUrl = documentUrl
-    session.state = 'awaiting_invoice'
-  } else if (documentType === 'invoice') {
-    session.invoiceUrl = documentUrl
-    session.state = 'processing'
-  }
-
-  session.updatedAt = new Date().toISOString()
-  sessions.set(customerPhone, session)
-
-  logInfo('verification-session', `Updated session for ${customerPhone}`, {
-    state: session.state,
-  })
-
-  return session
-}
-
-/**
- * Check if session is complete and ready for verification
- */
-export function isSessionComplete(session: VerificationSession): boolean {
-  return !!(session.watchPhotoUrl && session.guaranteeCardUrl && session.invoiceUrl)
-}
-
-/**
- * Clear session after completion
- */
-export function clearVerificationSession(customerPhone: string): void {
-  sessions.delete(customerPhone)
-  logInfo('verification-session', `Cleared session for ${customerPhone}`)
-}
-
-/**
- * Get next prompt for user based on session state
- */
-export function getNextPrompt(session: VerificationSession): string {
-  switch (session.state) {
-    case 'awaiting_watch_photo':
-      return '📸 Por favor, envie uma foto clara do seu relógio (mostrand o dial e a caixa).'
-    case 'awaiting_guarantee':
-      return '📄 Ótimo! Agora envie uma foto do certificado de garantia ou warranty card.'
-    case 'awaiting_invoice':
-      return '🧾 Perfeito! Por último, envie a nota fiscal ou recibo de compra.'
-    case 'processing':
-      return '⏳ Estou analisando todos os documentos. Isso levará alguns instantes...'
-    case 'completed':
-      return '✅ Verificação concluída!'
-    default:
-      return 'Por favor, envie a documentação solicitada.'
-  }
-}
+// Session management has been moved to ./verification-sessions.ts
+// Re-export for backwards compatibility
+export {
+  type VerificationSession,
+  createVerificationSession,
+  getVerificationSession,
+  updateVerificationSession,
+  isSessionComplete,
+  clearVerificationSession,
+  getNextPrompt,
+} from './verification-sessions'
