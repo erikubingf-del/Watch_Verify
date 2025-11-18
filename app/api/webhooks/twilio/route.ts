@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { atCreate } from '@/utils/airtable'
+import { atCreate, atSelect, buildFormula } from '@/utils/airtable'
 import { chat } from '@/utils/openai'
 import { validateTwilioRequest, createTwiMLResponse } from '@/lib/twilio'
 import { logError, logInfo } from '@/lib/logger'
@@ -54,8 +54,34 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 3: Get tenant_id from Twilio number mapping
-    // TODO: Look up from StoreNumbers table
-    const tenantId = 'temp-tenant-id'
+    let tenantId: string | null = null
+
+    try {
+      const storeNumbers = await atSelect('StoreNumbers', {
+        filterByFormula: buildFormula('phone', '=', toNumber),
+        maxRecords: '1'
+      })
+
+      if (storeNumbers.length > 0 && storeNumbers[0].fields.tenant_id) {
+        // tenant_id is a linked record (array), get first element
+        const tenantIds = storeNumbers[0].fields.tenant_id as any
+        tenantId = Array.isArray(tenantIds) ? tenantIds[0] : tenantIds
+        logInfo('tenant-lookup', 'Tenant ID resolved', { phone: toNumber, tenantId })
+      } else {
+        logError('tenant-lookup', new Error('No tenant found for phone number'), { phone: toNumber })
+        // Return error message to user
+        return new NextResponse(
+          createTwiMLResponse('⚠️ Número não configurado. Por favor, entre em contato com o suporte.'),
+          { headers: { 'content-type': 'application/xml' } }
+        )
+      }
+    } catch (error: any) {
+      logError('tenant-lookup', error, { phone: toNumber })
+      return new NextResponse(
+        createTwiMLResponse('❌ Erro ao processar sua mensagem. Tente novamente mais tarde.'),
+        { status: 500, headers: { 'content-type': 'application/xml' } }
+      )
+    }
 
     // Step 4: Log message
     await atCreate('Messages', {

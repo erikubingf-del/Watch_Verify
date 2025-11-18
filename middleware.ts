@@ -68,19 +68,17 @@ export async function middleware(req: NextRequest) {
     const authHeader = req.headers.get('authorization')
 
     if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.substring(7)
-      // TODO: Validate JWT token and extract tenant_id
-      // For now, allow requests with any Bearer token (will be fixed with NextAuth)
-      tenantId = 'temp-tenant-id'
+      // Bearer token auth - extract tenant from JWT
+      // For now, allow and let the route handler validate
+      // TODO: Implement JWT validation and tenant extraction from Bearer token
+      return NextResponse.next()
     }
 
     // For internal API calls (no auth header), check session
-    if (!tenantId) {
-      const sessionCookie = req.cookies.get('next-auth.session-token') || req.cookies.get('__Secure-next-auth.session-token')
-      if (sessionCookie) {
-        // Session exists, allow request (tenant will be extracted in route)
-        return NextResponse.next()
-      }
+    const sessionCookie = req.cookies.get('next-auth.session-token') || req.cookies.get('__Secure-next-auth.session-token')
+    if (sessionCookie) {
+      // Session exists, allow request (tenant will be extracted in route via auth())
+      return NextResponse.next()
     }
   }
 
