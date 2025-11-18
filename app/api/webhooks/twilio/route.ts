@@ -3,6 +3,7 @@ import { atCreate, atSelect, buildFormula } from '@/utils/airtable'
 import { chat } from '@/utils/openai'
 import { validateTwilioRequest, createTwiMLResponse } from '@/lib/twilio'
 import { logError, logInfo } from '@/lib/logger'
+import { runVerification } from '@/lib/verification'
 import {
   getVerificationSession,
   createVerificationSession,
@@ -10,8 +11,7 @@ import {
   isSessionComplete,
   getNextPrompt,
   clearVerificationSession,
-  runVerification,
-} from '@/lib/verification'
+} from '@/lib/verification-sessions'
 import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
 
 // Twilio sends x-www-form-urlencoded; parse using formData() in Next.js
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     let responseMessage = ''
 
     // Step 5: Check if this is part of a verification workflow
-    let session = getVerificationSession(wa)
+    let session = await getVerificationSession(wa)
 
     // Detect verification intent from message
     const wantsVerification =
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       // Handle verification workflow
       if (!session && numMedia === 0) {
         // User wants to start verification
-        session = createVerificationSession(tenantId, wa, 'Cliente')
+        session = await createVerificationSession(tenantId, wa, 'Cliente')
         responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
       } else if (session && numMedia > 0) {
         // User sent a document
@@ -118,13 +118,13 @@ export async function POST(req: NextRequest) {
 
         // Determine document type based on session state
         if (session.state === 'awaiting_watch_photo') {
-          session = updateVerificationSession(wa, 'watch', mediaUrl)
+          session = await updateVerificationSession(wa, 'watch', mediaUrl)
           responseMessage = `✅ Foto do relógio recebida!\n\n${getNextPrompt(session!)}`
         } else if (session.state === 'awaiting_guarantee') {
-          session = updateVerificationSession(wa, 'guarantee', mediaUrl)
+          session = await updateVerificationSession(wa, 'guarantee', mediaUrl)
           responseMessage = `✅ Certificado recebido!\n\n${getNextPrompt(session!)}`
         } else if (session.state === 'awaiting_invoice') {
-          session = updateVerificationSession(wa, 'invoice', mediaUrl)
+          session = await updateVerificationSession(wa, 'invoice', mediaUrl)
 
           // Check if we have all documents
           if (isSessionComplete(session!)) {
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
               responseMessage += resultMessage
 
               // Clear session
-              clearVerificationSession(wa)
+              await clearVerificationSession(wa)
             } catch (error: any) {
               logError('verification-webhook', error)
               responseMessage += `\n\n❌ Erro ao processar verificação. Por favor, tente novamente ou entre em contato com nossa equipe.`
@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
         responseMessage = getNextPrompt(session)
       } else {
         // Start new verification
-        session = createVerificationSession(tenantId, wa, 'Cliente')
+        session = await createVerificationSession(tenantId, wa, 'Cliente')
         responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
       }
     } else {

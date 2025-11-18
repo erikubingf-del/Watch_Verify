@@ -301,6 +301,56 @@ This document describes the complete Airtable base structure required for Watch 
 
 ---
 
+## Table 9: VerificationSessions
+
+**Purpose:** Store temporary verification workflow sessions to prevent data loss on server restarts.
+
+| Field Name | Type | Required | Description |
+|------------|------|----------|-------------|
+| `session_id` | Single line text | ✅ | Unique session ID (UUID) |
+| `tenant_id` | Single line text | ✅ | Tenant ID (not linked to avoid complexity) |
+| `customer_phone` | Phone | ✅ | Customer phone number (unique per active session) |
+| `customer_name` | Single line text | ✅ | Customer name |
+| `state` | Single select | ✅ | Current workflow state |
+| `watch_photo_url` | URL | ❌ | Watch photo URL |
+| `guarantee_card_url` | URL | ❌ | Guarantee card URL |
+| `invoice_url` | URL | ❌ | Invoice URL |
+| `created_at` | Date & time | ✅ | Session creation time |
+| `updated_at` | Date & time | ✅ | Last update time |
+| `expires_at` | Date & time | ✅ | Session expiration (1 hour from creation) |
+
+**Single Select Options for `state`:**
+- awaiting_watch_photo
+- awaiting_guarantee
+- awaiting_invoice
+- processing
+- completed
+
+**Example Record:**
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "tenant_id": "recXXXXXXXXXXXXXX",
+  "customer_phone": "+5511988888888",
+  "customer_name": "João Silva",
+  "state": "awaiting_guarantee",
+  "watch_photo_url": "https://api.twilio.com/2010-04-01/Accounts/.../Media/...",
+  "guarantee_card_url": null,
+  "invoice_url": null,
+  "created_at": "2024-01-20T15:30:00.000Z",
+  "updated_at": "2024-01-20T15:32:00.000Z",
+  "expires_at": "2024-01-20T16:30:00.000Z"
+}
+```
+
+**Notes:**
+- Sessions expire after 1 hour (configurable)
+- Expired sessions should be cleaned up periodically
+- Only one active session per customer_phone allowed
+- Use `session_id` as primary key, `customer_phone` for lookups
+
+---
+
 ## Quick Setup Guide
 
 ### 1. Create Base
@@ -309,7 +359,7 @@ This document describes the complete Airtable base structure required for Watch 
 3. Copy the Base ID from URL
 
 ### 2. Create Tables
-Create all 8 tables listed above with exact field names and types.
+Create all 9 tables listed above with exact field names and types.
 
 ### 3. Add Sample Data
 Add at least one tenant and one user to test authentication.
