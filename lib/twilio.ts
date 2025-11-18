@@ -69,3 +69,59 @@ export function createTwiMLResponse(message: string): string {
 
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escaped}</Message></Response>`
 }
+
+/**
+ * Send WhatsApp message programmatically (for notifications, confirmations, etc.)
+ * Uses Twilio's Messaging API
+ */
+export async function sendWhatsAppMessage(
+  to: string,
+  message: string,
+  from?: string
+): Promise<boolean> {
+  try {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID
+    const authToken = process.env.TWILIO_AUTH_TOKEN
+    const defaultFrom = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886'
+
+    if (!accountSid || !authToken) {
+      console.error('Twilio credentials not configured')
+      return false
+    }
+
+    // Format numbers
+    const toFormatted = to.startsWith('whatsapp:') ? to : `whatsapp:${formatWhatsAppNumber(to)}`
+    const fromFormatted = from || defaultFrom
+
+    // Send via Twilio API
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
+        },
+        body: new URLSearchParams({
+          To: toFormatted,
+          From: fromFormatted,
+          Body: message,
+        }),
+      }
+    )
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      console.error('Twilio API error:', errorData)
+      return false
+    }
+
+    const data = await response.json()
+    console.log('WhatsApp message sent:', { sid: data.sid, to: toFormatted })
+
+    return true
+  } catch (error: any) {
+    console.error('Failed to send WhatsApp message:', error.message)
+    return false
+  }
+}
