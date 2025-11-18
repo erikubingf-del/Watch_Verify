@@ -102,7 +102,7 @@ export function validate<T>(schema: z.ZodSchema<T>, data: unknown): {
     return { success: true, data: parsed }
   } catch (error) {
     if (error instanceof z.ZodError) {
-      const messages = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
+      const messages = error.issues.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ')
       return { success: false, error: messages }
     }
     return { success: false, error: 'Validation failed' }

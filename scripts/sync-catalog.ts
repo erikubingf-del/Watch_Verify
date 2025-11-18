@@ -50,11 +50,11 @@ async function syncCatalog() {
 
   console.log(`📥 Fetching catalog items...`)
 
-  let records: CatalogRecord[]
+  let records: any[]
   try {
     records = await atSelect<CatalogRecord>('Catalog', {
       filterByFormula: filterFormula,
-    })
+    }) as any
   } catch (error: any) {
     console.error(`❌ Failed to fetch catalog: ${error.message}`)
     process.exit(1)

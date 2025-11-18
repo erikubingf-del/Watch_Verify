@@ -114,16 +114,18 @@ export async function searchCatalog(
 
   for (const record of records) {
     try {
+      const fields = record.fields as any
+
       // Skip records without embeddings
-      if (!record.fields.embedding) {
+      if (!fields.embedding) {
         logWarn('semantic-search', `Record ${record.id} missing embedding`, {
-          title: record.fields.title,
+          title: fields.title,
         })
         continue
       }
 
       // Restore embedding from base64
-      const itemEmbedding = base64ToEmbedding(record.fields.embedding)
+      const itemEmbedding = base64ToEmbedding(fields.embedding)
 
       // Calculate cosine similarity
       const similarity = cosineSimilarity(queryEmbedding, itemEmbedding)
@@ -136,18 +138,18 @@ export async function searchCatalog(
       // Calculate relevance score (combines similarity with other factors)
       const relevanceScore = calculateRelevanceScore(
         similarity,
-        record.fields,
+        fields,
         query
       )
 
       scoredResults.push({
         id: record.id,
-        title: record.fields.title,
-        description: record.fields.description,
-        category: record.fields.category,
-        price: record.fields.price,
-        imageUrl: record.fields.image_url,
-        tags: record.fields.tags,
+        title: fields.title,
+        description: fields.description,
+        category: fields.category,
+        price: fields.price,
+        imageUrl: fields.image_url,
+        tags: fields.tags,
         similarity,
         relevanceScore,
       })
@@ -245,12 +247,13 @@ export async function findSimilarItems(
   }
 
   const sourceItem = sourceRecords[0]
+  const sourceFields = sourceItem.fields as any
 
-  if (!sourceItem.fields.embedding) {
+  if (!sourceFields.embedding) {
     throw new Error(`Item ${itemId} has no embedding`)
   }
 
-  const sourceEmbedding = base64ToEmbedding(sourceItem.fields.embedding)
+  const sourceEmbedding = base64ToEmbedding(sourceFields.embedding)
 
   // Search for similar items (excluding the source item)
   const filters: string[] = [`RECORD_ID()!='${itemId}'`, `{embedding}!=''`]
@@ -260,8 +263,8 @@ export async function findSimilarItems(
   }
 
   // Prefer same category
-  if (sourceItem.fields.category) {
-    filters.push(`{category}='${sourceItem.fields.category}'`)
+  if (sourceFields.category) {
+    filters.push(`{category}='${sourceFields.category}'`)
   }
 
   const filterFormula = `AND(${filters.join(',')})`
@@ -274,19 +277,20 @@ export async function findSimilarItems(
   const scoredResults: SearchResult[] = []
 
   for (const record of records) {
-    if (!record.fields.embedding) continue
+    const fields = record.fields as any
+    if (!fields.embedding) continue
 
-    const itemEmbedding = base64ToEmbedding(record.fields.embedding)
+    const itemEmbedding = base64ToEmbedding(fields.embedding)
     const similarity = cosineSimilarity(sourceEmbedding, itemEmbedding)
 
     scoredResults.push({
       id: record.id,
-      title: record.fields.title,
-      description: record.fields.description,
-      category: record.fields.category,
-      price: record.fields.price,
-      imageUrl: record.fields.image_url,
-      tags: record.fields.tags,
+      title: fields.title,
+      description: fields.description,
+      category: fields.category,
+      price: fields.price,
+      imageUrl: fields.image_url,
+      tags: fields.tags,
       similarity,
       relevanceScore: similarity * 100,
     })
@@ -298,7 +302,7 @@ export async function findSimilarItems(
     .slice(0, limit)
 
   logInfo('find-similar', 'Found similar items', {
-    sourceItem: sourceItem.fields.title,
+    sourceItem: sourceFields.title,
     resultsFound: results.length,
     durationMs: timer.elapsed(),
   })
@@ -328,21 +332,24 @@ export async function getTrendingItems(
 
   const records = await atSelect<CatalogRecord>('Catalog', {
     ...(filterFormula && { filterByFormula: filterFormula }),
-    sort: [{ field: 'created_at', direction: 'desc' }],
-    maxRecords: limit,
+    sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
+    maxRecords: limit.toString(),
   })
 
-  return records.map((record) => ({
-    id: record.id,
-    title: record.fields.title,
-    description: record.fields.description,
-    category: record.fields.category,
-    price: record.fields.price,
-    imageUrl: record.fields.image_url,
-    tags: record.fields.tags,
-    similarity: 0,
-    relevanceScore: 0,
-  }))
+  return records.map((record) => {
+    const fields = record.fields as any
+    return {
+      id: record.id,
+      title: fields.title,
+      description: fields.description,
+      category: fields.category,
+      price: fields.price,
+      imageUrl: fields.image_url,
+      tags: fields.tags,
+      similarity: 0,
+      relevanceScore: 0,
+    }
+  })
 }
 
 // Type definitions
