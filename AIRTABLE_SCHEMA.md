@@ -667,6 +667,58 @@ This document describes the complete Airtable base structure required for Watch 
 
 ---
 
+## Table 17: BookingSessions
+
+**Purpose:** Temporary storage for appointment booking conversations (30min TTL).
+
+| Field Name | Type | Required | Description |
+|------------|------|----------|-------------|
+| `session_id` | Single line text | ✅ | Unique session ID (UUID) |
+| `tenant_id` | Single line text | ✅ | Store/tenant |
+| `customer_phone` | Phone | ✅ | Customer phone number |
+| `customer_name` | Single line text | ✅ | Customer name |
+| `state` | Single select | ✅ | Current conversation step |
+| `preferred_date` | Date | ❌ | Date customer wants to visit |
+| `preferred_time` | Single line text | ❌ | Time slot chosen |
+| `available_slots` | Long text (JSON) | ❌ | Cached available slots |
+| `product_interest` | Long text | ❌ | Product customer wants to see |
+| `created_at` | Date & time | ✅ | Session creation time |
+| `updated_at` | Date & time | ✅ | Last update time |
+| `expires_at` | Date & time | ✅ | Session expiration (30 minutes) |
+| `deleted_at` | Date & time | ❌ | Soft delete timestamp |
+
+**Single Select Options for `state`:**
+- awaiting_date
+- awaiting_time
+- awaiting_product
+- completed
+
+**Example Record:**
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "tenant_id": "recXXXXXXXXXXXXXX",
+  "customer_phone": "+5511988888888",
+  "customer_name": "João Silva",
+  "state": "awaiting_time",
+  "preferred_date": "2024-01-25",
+  "preferred_time": null,
+  "available_slots": "[{\"time\":\"14:00\",\"available\":5,\"booked\":0,\"percentage\":0}]",
+  "product_interest": null,
+  "created_at": "2024-01-20T15:00:00.000Z",
+  "updated_at": "2024-01-20T15:05:00.000Z",
+  "expires_at": "2024-01-20T15:30:00.000Z"
+}
+```
+
+**Notes:**
+- Similar to VerificationSessions and CampaignSessions
+- Manages booking conversation state
+- Auto-cleanup expired sessions
+- Steps: awaiting_date → awaiting_time → awaiting_product → completed
+
+---
+
 ## Quick Setup Guide
 
 ### 1. Create Base
@@ -675,10 +727,10 @@ This document describes the complete Airtable base structure required for Watch 
 3. Copy the Base ID from URL
 
 ### 2. Create Tables
-Create all 16 tables listed above with exact field names and types.
+Create all 17 tables listed above with exact field names and types.
 
 **Core Tables (Tables 1-9):** Required for basic functionality
-**Booking System (Tables 10-12):** Required for appointment scheduling
+**Booking System (Tables 10-12, 17):** Required for appointment scheduling
 **Payment System (Tables 13-14):** Required for online sales
 **Campaign System (Tables 15-16):** Required for marketing automation
 
