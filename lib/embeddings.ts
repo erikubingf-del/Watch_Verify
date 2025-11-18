@@ -215,7 +215,7 @@ export function logEmbeddingOperation(
   durationMs: number
 ) {
   const cost = calculateEmbeddingCost(tokens)
-  logInfo('embeddings', {
+  logInfo('embeddings', `${operation} completed`, {
     operation,
     count,
     tokens,

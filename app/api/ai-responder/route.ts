@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       // Use enhanced system prompt with catalog context
       systemPrompt = ragContext.systemPrompt
 
-      logInfo('ai-responder-rag', {
+      logInfo('ai-responder-rag', 'RAG context built successfully', {
         searchPerformed: ragContext.searchPerformed,
         productsFound: ragContext.relevantProducts.length,
       })

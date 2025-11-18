@@ -8,6 +8,8 @@ import { logInfo, logError } from '@/lib/logger'
  * Soft-deletes customer and all related data (cascade)
  */
 export async function POST(req: NextRequest) {
+  let phone: string | undefined
+
   try {
     // Step 1: Validate input
     const body = await req.json()
@@ -20,7 +22,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { phone } = validation.data
+    phone = validation.data.phone
 
     // Step 2: Find customer using safe formula
     const formula = buildFormula('phone', '=', phone)
@@ -76,7 +78,7 @@ export async function POST(req: NextRequest) {
       message: 'Customer and all related data soft-deleted successfully',
     })
   } catch (e: any) {
-    logError('customer-deletion', e, { phone: body?.phone })
+    logError('customer-deletion', e, { phone })
     return NextResponse.json(
       { ok: false, error: 'Internal server error' },
       { status: 500 }

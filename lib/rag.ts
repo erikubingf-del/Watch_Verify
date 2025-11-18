@@ -57,13 +57,13 @@ export async function buildRAGContext(
       relevantProducts = searchResponse.results
       searchPerformed = true
 
-      logInfo('rag-search', {
+      logInfo('rag-search', 'Semantic search completed', {
         query: userMessage,
         resultsFound: relevantProducts.length,
         topSimilarity: relevantProducts[0]?.similarity.toFixed(3) || 0,
       })
     } catch (error: any) {
-      logInfo('rag-search-skip', { reason: error.message })
+      logInfo('rag-search-skip', 'Semantic search skipped', { reason: error.message })
     }
   }
 
@@ -254,8 +254,8 @@ async function buildConversationContext(
     // Fetch recent messages
     const messages = await atSelect<MessageRecord>('Messages', {
       filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {deleted_at}='')`,
-      sort: [{ field: 'created_at', direction: 'desc' }],
-      maxRecords: maxMessages,
+      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
+      maxRecords: maxMessages.toString(),
     })
 
     if (messages.length === 0) {
@@ -267,13 +267,14 @@ async function buildConversationContext(
 
     // Format as conversation
     const lines = chronological.map((msg) => {
-      const direction = msg.fields.direction === 'inbound' ? 'Customer' : 'Assistant'
-      return `${direction}: ${msg.fields.body}`
+      const fields = msg.fields as any
+      const direction = fields.direction === 'inbound' ? 'Customer' : 'Assistant'
+      return `${direction}: ${fields.body}`
     })
 
     return lines.join('\n')
   } catch (error: any) {
-    logInfo('rag-conversation-context', { error: error.message })
+    logInfo('rag-conversation-context', 'Failed to fetch conversation context', { error: error.message })
     return ''
   }
 }
@@ -289,8 +290,8 @@ export async function extractCustomerInterests(
     // Fetch recent inbound messages (customer's actual words)
     const messages = await atSelect<MessageRecord>('Messages', {
       filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {direction}='inbound', {deleted_at}='')`,
-      sort: [{ field: 'created_at', direction: 'desc' }],
-      maxRecords: 20,
+      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
+      maxRecords: '20',
     })
 
     if (messages.length === 0) {
@@ -298,7 +299,7 @@ export async function extractCustomerInterests(
     }
 
     // Combine all messages
-    const allText = messages.map((m) => m.fields.body).join(' ')
+    const allText = messages.map((m) => (m.fields as any).body).join(' ')
 
     // Extract brand mentions
     const brands = [

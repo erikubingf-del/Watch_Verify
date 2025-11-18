@@ -83,9 +83,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // At this point, tenantId is guaranteed to be non-null (early return above if null)
+    // TypeScript doesn't infer this, so we assert it
+    const validTenantId: string = tenantId!
+
     // Step 4: Log message
     await atCreate('Messages', {
-      tenant_id: tenantId,
+      tenant_id: validTenantId,
       phone: wa,
       body,
       direction: 'inbound',
@@ -110,7 +114,7 @@ export async function POST(req: NextRequest) {
       // Handle verification workflow
       if (!session && numMedia === 0) {
         // User wants to start verification
-        session = await createVerificationSession(tenantId, wa, 'Cliente')
+        session = await createVerificationSession(validTenantId, wa, 'Cliente')
         responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
       } else if (session && numMedia > 0) {
         // User sent a document
@@ -133,7 +137,7 @@ export async function POST(req: NextRequest) {
             // Run verification asynchronously
             try {
               const result = await runVerification({
-                tenantId,
+                tenantId: validTenantId,
                 customerName: session!.customerName,
                 customerPhone: wa,
                 watchPhotoUrl: session!.watchPhotoUrl,
@@ -188,7 +192,7 @@ export async function POST(req: NextRequest) {
         responseMessage = getNextPrompt(session)
       } else {
         // Start new verification
-        session = await createVerificationSession(tenantId, wa, 'Cliente')
+        session = await createVerificationSession(validTenantId, wa, 'Cliente')
         responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
       }
     } else {
@@ -196,7 +200,7 @@ export async function POST(req: NextRequest) {
       try {
         // Build RAG context with semantic search
         const ragContext = await buildRAGContext(body, {
-          tenantId,
+          tenantId: validTenantId,
           customerPhone: wa,
           includeConversationHistory: true,
           maxHistoryMessages: 10,
@@ -216,7 +220,7 @@ export async function POST(req: NextRequest) {
 
         // Optionally append product recommendations in structured format
         if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
-          logInfo('whatsapp-rag-recommendation', {
+          logInfo('whatsapp-rag-recommendation', 'RAG product recommendations sent', {
             phone: wa,
             productsFound: ragContext.relevantProducts.length,
           })

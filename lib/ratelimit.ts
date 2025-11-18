@@ -1,4 +1,4 @@
-import { Ratelimit } from '@upstash/ratelimit'
+import { Ratelimit, type Duration } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
 
 /**
@@ -20,7 +20,7 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
 /**
  * Get or create a rate limiter with specific limits
  */
-function getRateLimiter(key: string, requests: number, window: string): Ratelimit | null {
+function getRateLimiter(key: string, requests: number, window: Duration): Ratelimit | null {
   if (!redis) {
     console.warn('Redis not configured - rate limiting disabled')
     return null

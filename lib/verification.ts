@@ -54,11 +54,17 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
     if (isCloudinaryConfigured()) {
       try {
         logInfo('verification', 'Uploading documents to Cloudinary')
-        permanentUrls = await uploadVerificationDocuments({
+        const uploadedUrls = await uploadVerificationDocuments({
           watchPhotoUrl: request.watchPhotoUrl,
           guaranteeCardUrl: request.guaranteeCardUrl,
           invoiceUrl: request.invoiceUrl,
         })
+        // Merge uploaded URLs with original URLs (keep originals if upload failed for some)
+        permanentUrls = {
+          watchPhoto: uploadedUrls.watchPhoto || permanentUrls.watchPhoto,
+          guaranteeCard: uploadedUrls.guaranteeCard || permanentUrls.guaranteeCard,
+          invoice: uploadedUrls.invoice || permanentUrls.invoice,
+        }
         logInfo('verification', 'Documents uploaded to Cloudinary successfully')
       } catch (error: any) {
         logWarn('verification', 'Failed to upload to Cloudinary, using Twilio URLs', { error: error.message })
@@ -90,7 +96,7 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
     // Step 3: Lookup market data
     const brand = watchAnalysis?.brand || guaranteeAnalysis?.brand || 'Unknown'
     const model = watchAnalysis?.model || guaranteeAnalysis?.model || 'Unknown'
-    const reference = watchAnalysis?.reference || guaranteeAnalysis?.reference
+    const reference = watchAnalysis?.reference
 
     const marketData = await lookupWatch(brand, model, reference || undefined)
 

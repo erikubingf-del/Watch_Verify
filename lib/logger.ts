@@ -95,13 +95,21 @@ export class PerformanceTimer {
   private startTime: number
   private context: string
 
-  constructor(context: string) {
+  constructor(context: string = 'performance') {
     this.context = context
     this.startTime = Date.now()
   }
 
+  start() {
+    this.startTime = Date.now()
+  }
+
+  elapsed(): number {
+    return Date.now() - this.startTime
+  }
+
   end(label: string) {
-    const duration = Date.now() - this.startTime
+    const duration = this.elapsed()
     logDebug(this.context, `${label} took ${duration}ms`)
     return duration
   }

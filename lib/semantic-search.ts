@@ -59,7 +59,7 @@ export async function searchCatalog(
   } = options
 
   // Step 1: Generate embedding for search query
-  logInfo('semantic-search', { query, options })
+  logInfo('semantic-search', 'Starting semantic search', { query, options })
   const { embedding: queryEmbedding } = await generateEmbedding(query)
 
   // Step 2: Build Airtable filter
@@ -95,7 +95,7 @@ export async function searchCatalog(
     ...(filterFormula && { filterByFormula: filterFormula }),
   })
 
-  logInfo('semantic-search-fetch', {
+  logInfo('semantic-search-fetch', 'Fetched catalog records', {
     recordsFetched: records.length,
     filterApplied: !!filterFormula,
   })
@@ -165,7 +165,7 @@ export async function searchCatalog(
 
   const durationMs = timer.elapsed()
 
-  logInfo('semantic-search-complete', {
+  logInfo('semantic-search-complete', 'Semantic search completed', {
     resultsFound: results.length,
     totalSearched: records.length,
     durationMs,
@@ -297,7 +297,7 @@ export async function findSimilarItems(
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, limit)
 
-  logInfo('find-similar', {
+  logInfo('find-similar', 'Found similar items', {
     sourceItem: sourceItem.fields.title,
     resultsFound: results.length,
     durationMs: timer.elapsed(),

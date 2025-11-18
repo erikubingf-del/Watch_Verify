@@ -72,7 +72,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       // Add custom fields to JWT on sign in
       if (user) {
-        token.tenantId = user.tenantId
+        token.tenantId = user.tenantId || undefined
         token.role = user.role
       }
       return token
@@ -131,7 +131,7 @@ declare module 'next-auth' {
   }
 }
 
-declare module 'next-auth/jwt' {
+declare module '@auth/core/jwt' {
   interface JWT {
     tenantId?: string
     role?: string
