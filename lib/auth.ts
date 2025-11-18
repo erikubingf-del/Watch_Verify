@@ -2,6 +2,7 @@ import NextAuth from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { atSelect } from '@/utils/airtable'
 import bcrypt from 'bcryptjs'
+import { logInfo, logError } from './logger'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -12,50 +13,45 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        console.log('🔐 Login attempt for:', credentials?.email)
-
         if (!credentials?.email || !credentials?.password) {
-          console.log('❌ Missing credentials')
           return null
         }
 
         try {
           // Query Airtable Users table
-          console.log('📋 Querying Airtable Users table...')
           const users = await atSelect('Users', {
             filterByFormula: `({email}='${String(credentials.email).replace(/'/g, "\\'")}')`,
           })
 
           if (!users.length) {
-            console.log('❌ No user found with email:', credentials.email)
+            logInfo('auth', 'Login attempt failed - user not found', { email: credentials.email })
             return null
           }
 
           const user = users[0]
-          console.log('✅ User found:', user.fields.email)
-          console.log('   Active:', user.fields.active)
-          console.log('   Has password_hash:', !!user.fields.password_hash)
-          console.log('   Tenant ID:', user.fields.tenant_id)
 
           // Check if user is active
           if (!user.fields.active) {
-            console.log('❌ User is not active')
+            logInfo('auth', 'Login attempt failed - user not active', { email: user.fields.email })
             return null
           }
 
           // Verify password
-          console.log('🔑 Verifying password...')
           const passwordMatch = await bcrypt.compare(
             String(credentials.password),
             user.fields.password_hash as string
           )
 
           if (!passwordMatch) {
-            console.log('❌ Password does not match')
+            logInfo('auth', 'Login attempt failed - invalid password', { email: user.fields.email })
             return null
           }
 
-          console.log('✅ Password match! Login successful')
+          logInfo('auth', 'Login successful', {
+            email: user.fields.email,
+            role: user.fields.role,
+            tenantId: user.fields.tenant_id?.[0]
+          })
 
           // Return user object (will be stored in JWT)
           return {
@@ -66,7 +62,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             role: user.fields.role as string,
           }
         } catch (error) {
-          console.error('❌ Auth error:', error)
+          logError('auth', error as Error, { email: credentials.email })
           return null
         }
       },
@@ -76,7 +72,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       // Add custom fields to JWT on sign in
       if (user) {
-        console.log('🔑 JWT callback - Adding user to token:', { email: user.email, tenantId: user.tenantId })
         token.tenantId = user.tenantId
         token.role = user.role
       }
@@ -84,22 +79,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       // Add custom fields to session from JWT
-      console.log('📝 Session callback - Creating session for:', token.email)
       if (session.user) {
         session.user.tenantId = token.tenantId as string
         session.user.role = token.role as string
       }
-      console.log('📝 Session created:', { email: session.user?.email, hasTenantId: !!session.user?.tenantId })
       return session
     },
     async redirect({ url, baseUrl }) {
-      // Redirect to dashboard after successful login
-      console.log('🔀 Redirect callback:', { url, baseUrl })
-
       // Always redirect to dashboard after login
       // Avoid redirecting back to login page
       if (url.includes('/login') || url === baseUrl) {
-        console.log('   → Redirecting to /dashboard')
         return `${baseUrl}/dashboard`
       }
 
