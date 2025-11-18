@@ -2,6 +2,36 @@ import { auth } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 
+// Fetch stats from API
+async function getStats(tenantId: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
+  const res = await fetch(`${baseUrl}/api/dashboard/stats`, {
+    cache: 'no-store',
+    headers: {
+      'Cookie': `tenant_id=${tenantId}` // Pass tenant context
+    }
+  })
+  if (!res.ok) {
+    return { totalProducts: 0, totalVerifications: 0, avgICD: 0, activeCustomers: 0 }
+  }
+  return res.json()
+}
+
+// Fetch recent verifications
+async function getRecentVerifications(tenantId: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
+  const res = await fetch(`${baseUrl}/api/dashboard/verifications?limit=5`, {
+    cache: 'no-store',
+    headers: {
+      'Cookie': `tenant_id=${tenantId}`
+    }
+  })
+  if (!res.ok) {
+    return { verifications: [] }
+  }
+  return res.json()
+}
+
 export default async function DashboardHome() {
   const session = await auth()
 
@@ -9,21 +39,11 @@ export default async function DashboardHome() {
     redirect('/login')
   }
 
-  // Mock stats - in production, these would come from API calls
-  const stats = {
-    totalProducts: 47,
-    totalVerifications: 124,
-    avgICD: 87.3,
-    activeCustomers: 238,
-  }
+  const tenantId = session.user?.tenantId || ''
 
-  const recentVerifications = [
-    { id: '1', customer: 'João Silva', brand: 'Rolex', model: 'Submariner', icd: 92, status: 'approved', date: '2024-01-20' },
-    { id: '2', customer: 'Maria Santos', brand: 'Omega', model: 'Seamaster', icd: 78, status: 'approved', date: '2024-01-19' },
-    { id: '3', customer: 'Pedro Costa', brand: 'Cartier', model: 'Santos', icd: 65, status: 'manual_review', date: '2024-01-19' },
-    { id: '4', customer: 'Ana Lima', brand: 'Patek Philippe', model: 'Calatrava', icd: 95, status: 'approved', date: '2024-01-18' },
-    { id: '5', customer: 'Carlos Mendes', brand: 'Rolex', model: 'GMT-Master II', icd: 42, status: 'rejected', date: '2024-01-18' },
-  ]
+  // Fetch data
+  const stats = await getStats(tenantId)
+  const { verifications: recentVerifications } = await getRecentVerifications(tenantId)
 
   function getICDColor(icd: number) {
     if (icd >= 90) return 'text-green-400'
@@ -121,64 +141,73 @@ export default async function DashboardHome() {
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg">
         <div className="p-6 border-b border-zinc-800">
           <h2 className="text-xl font-bold text-white">Verificações Recentes</h2>
-          <p className="text-sm text-zinc-400 mt-1">Últimas 5 verificações processadas</p>
+          <p className="text-sm text-zinc-400 mt-1">Últimas {recentVerifications.length} verificações processadas</p>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-zinc-950">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Cliente
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Relógio
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  ICD
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Data
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800">
-              {recentVerifications.map((verification) => (
-                <tr key={verification.id} className="hover:bg-zinc-800/50 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                    {verification.customer}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-300">
-                    {verification.brand} {verification.model}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`text-sm font-bold ${getICDColor(verification.icd)}`}>
-                      {verification.icd}/100
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {getStatusBadge(verification.status)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-400">
-                    {new Date(verification.date).toLocaleDateString('pt-BR')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {recentVerifications.length === 0 ? (
+          <div className="p-12 text-center">
+            <p className="text-zinc-500">Nenhuma verificação encontrada</p>
+            <p className="text-sm text-zinc-600 mt-2">Quando os clientes enviarem relógios para verificação, eles aparecerão aqui</p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-zinc-950">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                      Cliente
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                      Relógio
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                      ICD
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                      Data
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {recentVerifications.map((verification: any) => (
+                    <tr key={verification.id} className="hover:bg-zinc-800/50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
+                        {verification.customer}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-300">
+                        {verification.brand} {verification.model}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`text-sm font-bold ${getICDColor(verification.icd)}`}>
+                          {verification.icd}/100
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {getStatusBadge(verification.status)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-400">
+                        {new Date(verification.date).toLocaleDateString('pt-BR')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-        <div className="p-4 border-t border-zinc-800">
-          <Link
-            href="/dashboard/verifications"
-            className="text-sm text-blue-400 hover:text-blue-300 font-medium"
-          >
-            Ver todas as verificações →
-          </Link>
-        </div>
+            <div className="p-4 border-t border-zinc-800">
+              <Link
+                href="/dashboard/verifications"
+                className="text-sm text-blue-400 hover:text-blue-300 font-medium"
+              >
+                Ver todas as verificações →
+              </Link>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Quick Actions */}
@@ -221,41 +250,6 @@ export default async function DashboardHome() {
             Métricas, gráficos e relatórios detalhados
           </p>
         </Link>
-      </div>
-
-      {/* System Status */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Status do Sistema</h2>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">API OpenAI</span>
-            <span className="flex items-center gap-2 text-sm text-green-400">
-              <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-              Operacional
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Airtable Database</span>
-            <span className="flex items-center gap-2 text-sm text-green-400">
-              <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-              Conectado
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Twilio WhatsApp</span>
-            <span className="flex items-center gap-2 text-sm text-green-400">
-              <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-              Ativo
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Embeddings Sync</span>
-            <span className="flex items-center gap-2 text-sm text-yellow-400">
-              <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
-              73 produtos pendentes
-            </span>
-          </div>
-        </div>
       </div>
     </div>
   )
