@@ -36,17 +36,20 @@ export async function middleware(req: NextRequest) {
 
   // Strategy 1: Extract from session cookie (for dashboard routes)
   if (pathname.startsWith('/dashboard')) {
-    const sessionCookie = req.cookies.get('next-auth.session-token') || req.cookies.get('__Secure-next-auth.session-token')
+    // Check for NextAuth session cookie (varies by environment)
+    const sessionCookie = req.cookies.get('next-auth.session-token') ||
+                         req.cookies.get('__Secure-next-auth.session-token') ||
+                         req.cookies.get('authjs.session-token') ||
+                         req.cookies.get('__Secure-authjs.session-token')
 
     if (!sessionCookie) {
       // Redirect to login if no session
       return NextResponse.redirect(new URL('/login', req.url))
     }
 
-    // For now, we'll need to validate session server-side
-    // This will be implemented fully with NextAuth
-    // Temporary: Extract from custom header for testing
-    tenantId = req.headers.get('x-tenant-id') || null
+    // Session cookie exists - allow access
+    // Tenant will be extracted server-side via auth() in the route
+    return NextResponse.next()
   }
 
   // Strategy 2: Extract from Twilio number mapping (for webhook routes)
