@@ -95,7 +95,8 @@ export function buildFormula(
   operator: '=' | '!=' | '>' | '<' | '>=' | '<=' | 'CONTAINS',
   value: string | number
 ): string {
-  const sanitizedField = field.replace(/[^a-zA-Z0-9_]/g, '')
+  // Allow spaces and alphanumeric in field names (Airtable supports spaces)
+  const sanitizedField = field.replace(/[^a-zA-Z0-9_ ]/g, '')
 
   if (typeof value === 'number') {
     return `({${sanitizedField}}${operator}${value})`
