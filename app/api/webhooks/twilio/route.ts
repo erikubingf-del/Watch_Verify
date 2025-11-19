@@ -47,7 +47,10 @@ export async function POST(req: NextRequest) {
       body: params.Body?.substring(0, 50),
     })
 
-    const isValid = validateTwilioRequest(signature, url, params)
+    // TEMPORARY: Skip signature validation to debug
+    // TODO: Remove this after debugging signature issues
+    const skipValidation = process.env.TWILIO_SKIP_SIGNATURE_VALIDATION === 'true'
+    const isValid = skipValidation ? true : validateTwilioRequest(signature, url, params)
 
     if (!isValid) {
       logError('twilio-webhook', new Error('Invalid Twilio signature'), {
@@ -56,11 +59,16 @@ export async function POST(req: NextRequest) {
         hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
         authTokenLength: process.env.TWILIO_AUTH_TOKEN?.length || 0,
         paramsKeys: Object.keys(params),
+        skipValidation,
       })
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
         { status: 403, headers: { 'content-type': 'application/xml' } }
       )
+    }
+
+    if (skipValidation) {
+      logInfo('twilio-webhook-bypass', 'Signature validation bypassed (TEMPORARY)', { url })
     }
 
     // Step 2: Extract message data
