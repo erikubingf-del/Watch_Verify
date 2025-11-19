@@ -254,7 +254,6 @@ async function buildConversationContext(
     // Fetch recent messages
     const messages = await atSelect<MessageRecord>('Messages', {
       filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {deleted_at}='')`,
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
       maxRecords: maxMessages.toString(),
     })
 
@@ -290,7 +289,6 @@ export async function extractCustomerInterests(
     // Fetch recent inbound messages (customer's actual words)
     const messages = await atSelect<MessageRecord>('Messages', {
       filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {direction}='inbound', {deleted_at}='')`,
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
       maxRecords: '20',
     })
 
