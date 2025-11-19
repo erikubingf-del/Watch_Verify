@@ -96,12 +96,12 @@ export async function POST(req: NextRequest) {
         from: from,
       })
 
-      const storeNumbers = await atSelect('StoreNumbers', {
-        filterByFormula: buildFormula('phone', '=', toNumber),
+      const storeNumbers = await atSelect('Store Numbers', {
+        filterByFormula: buildFormula('Phone Number', '=', toNumber),
         maxRecords: '1'
       })
 
-      logInfo('tenant-lookup-result', 'StoreNumbers query result', {
+      logInfo('tenant-lookup-result', 'Store Numbers query result', {
         found: storeNumbers.length,
         hasRecords: storeNumbers.length > 0,
         hasTenantField: storeNumbers.length > 0 ? !!storeNumbers[0].fields.tenant_id : false,
