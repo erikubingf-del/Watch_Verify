@@ -38,10 +38,23 @@ export async function POST(req: NextRequest) {
       params[key] = String(value)
     })
 
+    // Log incoming webhook for debugging
+    logInfo('twilio-webhook-received', 'Incoming webhook', {
+      url,
+      hasSignature: !!signature,
+      from: params.From,
+      to: params.To,
+      body: params.Body?.substring(0, 50),
+    })
+
     const isValid = validateTwilioRequest(signature, url, params)
 
     if (!isValid) {
-      logError('twilio-webhook', new Error('Invalid Twilio signature'), { url })
+      logError('twilio-webhook', new Error('Invalid Twilio signature'), {
+        url,
+        signature: signature.substring(0, 20) + '...',
+        hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
+      })
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
         { status: 403, headers: { 'content-type': 'application/xml' } }
@@ -67,9 +80,21 @@ export async function POST(req: NextRequest) {
     let tenantId: string | null = null
 
     try {
+      logInfo('tenant-lookup-attempt', 'Looking up tenant', {
+        toNumber,
+        rawTo: to,
+        from: from,
+      })
+
       const storeNumbers = await atSelect('StoreNumbers', {
         filterByFormula: buildFormula('phone', '=', toNumber),
         maxRecords: '1'
+      })
+
+      logInfo('tenant-lookup-result', 'StoreNumbers query result', {
+        found: storeNumbers.length,
+        hasRecords: storeNumbers.length > 0,
+        hasTenantField: storeNumbers.length > 0 ? !!storeNumbers[0].fields.tenant_id : false,
       })
 
       if (storeNumbers.length > 0 && storeNumbers[0].fields.tenant_id) {
@@ -78,7 +103,11 @@ export async function POST(req: NextRequest) {
         tenantId = Array.isArray(tenantIds) ? tenantIds[0] : tenantIds
         logInfo('tenant-lookup', 'Tenant ID resolved', { phone: toNumber, tenantId })
       } else {
-        logError('tenant-lookup', new Error('No tenant found for phone number'), { phone: toNumber })
+        logError('tenant-lookup', new Error('No tenant found for phone number'), {
+          phone: toNumber,
+          rawTo: to,
+          searchedNumber: toNumber,
+        })
         // Return error message to user
         return new NextResponse(
           createTwiMLResponse('⚠️ Número não configurado. Por favor, entre em contato com o suporte.'),
@@ -86,7 +115,11 @@ export async function POST(req: NextRequest) {
         )
       }
     } catch (error: any) {
-      logError('tenant-lookup', error, { phone: toNumber })
+      logError('tenant-lookup', error, {
+        phone: toNumber,
+        errorMessage: error.message,
+        errorStack: error.stack?.substring(0, 200),
+      })
       return new NextResponse(
         createTwiMLResponse('❌ Erro ao processar sua mensagem. Tente novamente mais tarde.'),
         { status: 500, headers: { 'content-type': 'application/xml' } }
@@ -279,11 +312,20 @@ export async function POST(req: NextRequest) {
     } as any)
 
     // Step 8: Return TwiML
+    logInfo('twilio-webhook-success', 'Sending response', {
+      phone: wa,
+      responseLength: responseMessage.length,
+    })
+
     return new NextResponse(createTwiMLResponse(responseMessage), {
       headers: { 'content-type': 'application/xml' },
     })
   } catch (e: any) {
-    logError('twilio-webhook', e)
+    logError('twilio-webhook', e, {
+      errorMessage: e.message,
+      errorStack: e.stack?.substring(0, 300),
+      errorName: e.name,
+    })
     return new NextResponse(createTwiMLResponse('Desculpe, houve um erro. Tente novamente mais tarde.'), {
       status: 500,
       headers: { 'content-type': 'application/xml' },

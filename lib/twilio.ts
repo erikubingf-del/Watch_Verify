@@ -16,6 +16,12 @@ export function validateTwilioRequest(
 ): boolean {
   const authToken = process.env.TWILIO_AUTH_TOKEN
 
+  // Allow bypassing signature validation for debugging (INSECURE - use only temporarily!)
+  if (process.env.TWILIO_SKIP_SIGNATURE_VALIDATION === 'true') {
+    console.warn('⚠️  TWILIO_SKIP_SIGNATURE_VALIDATION is enabled - bypassing signature check (INSECURE!)')
+    return true
+  }
+
   if (!authToken) {
     console.warn('TWILIO_AUTH_TOKEN not set - skipping signature validation (INSECURE!)')
     // In development, allow requests without validation
@@ -24,7 +30,14 @@ export function validateTwilioRequest(
   }
 
   try {
-    return validateRequest(authToken, signature, url, params)
+    console.log('Validating Twilio signature:', {
+      url,
+      hasSignature: !!signature,
+      signatureLength: signature.length,
+    })
+    const isValid = validateRequest(authToken, signature, url, params)
+    console.log('Twilio signature validation result:', isValid)
+    return isValid
   } catch (error) {
     console.error('Twilio signature validation error:', error)
     return false
