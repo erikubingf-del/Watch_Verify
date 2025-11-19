@@ -83,7 +83,6 @@ export async function getVerificationSession(customerPhone: string): Promise<Ver
     const records = await atSelect('VerificationSessions', {
       filterByFormula: buildFormula('customer_phone', '=', customerPhone),
       maxRecords: '1',
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
     })
 
     if (records.length === 0) {

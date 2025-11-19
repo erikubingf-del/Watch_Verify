@@ -95,7 +95,6 @@ export async function getBookingSession(customerPhone: string): Promise<BookingS
     const records = await atSelect('BookingSessions', {
       filterByFormula: buildFormula('customer_phone', '=', customerPhone),
       maxRecords: '1',
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
     })
 
     if (records.length === 0) {
