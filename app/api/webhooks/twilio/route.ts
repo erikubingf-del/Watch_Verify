@@ -52,8 +52,10 @@ export async function POST(req: NextRequest) {
     if (!isValid) {
       logError('twilio-webhook', new Error('Invalid Twilio signature'), {
         url,
-        signature: signature.substring(0, 20) + '...',
+        signature: signature ? signature.substring(0, 20) + '...' : 'NO_SIGNATURE',
         hasAuthToken: !!process.env.TWILIO_AUTH_TOKEN,
+        authTokenLength: process.env.TWILIO_AUTH_TOKEN?.length || 0,
+        paramsKeys: Object.keys(params),
       })
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
