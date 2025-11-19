@@ -104,12 +104,12 @@ export async function POST(req: NextRequest) {
       logInfo('tenant-lookup-result', 'Store Numbers query result', {
         found: storeNumbers.length,
         hasRecords: storeNumbers.length > 0,
-        hasTenantField: storeNumbers.length > 0 ? !!storeNumbers[0].fields.tenant_id : false,
+        hasTenantField: storeNumbers.length > 0 ? !!storeNumbers[0].fields.Tenant : false,
       })
 
-      if (storeNumbers.length > 0 && storeNumbers[0].fields.tenant_id) {
-        // tenant_id is a linked record (array), get first element
-        const tenantIds = storeNumbers[0].fields.tenant_id as any
+      if (storeNumbers.length > 0 && storeNumbers[0].fields.Tenant) {
+        // Tenant is a linked record (array), get first element
+        const tenantIds = storeNumbers[0].fields.Tenant as any
         tenantId = Array.isArray(tenantIds) ? tenantIds[0] : tenantIds
         logInfo('tenant-lookup', 'Tenant ID resolved', { phone: toNumber, tenantId })
       } else {
