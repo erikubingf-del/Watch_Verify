@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
 
     // Step 4: Log message
     await atCreate('Messages', {
-      tenant_id: validTenantId,
+      tenant_id: [validTenantId], // Linked record field requires array
       phone: wa,
       body,
       direction: 'inbound',
@@ -314,7 +314,7 @@ export async function POST(req: NextRequest) {
 
     // Step 7: Log outbound message
     await atCreate('Messages', {
-      tenant_id: tenantId,
+      tenant_id: [validTenantId], // Linked record field requires array
       phone: wa,
       body: responseMessage,
       direction: 'outbound',
