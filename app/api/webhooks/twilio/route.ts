@@ -312,22 +312,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 7: Log outbound message
-    await atCreate('Messages', {
-      tenant_id: [validTenantId], // Linked record field requires array
-      phone: wa,
-      body: responseMessage,
-      direction: 'outbound',
-      created_at: new Date().toISOString(),
-    } as any)
+    // Step 7: Send message via Twilio Messaging API (instead of TwiML)
+    // This bypasses sandbox geographic restrictions
+    const { sendWhatsAppMessage } = await import('@/lib/twilio')
+    const messageSent = await sendWhatsAppMessage(from, responseMessage, to)
 
-    // Step 8: Return TwiML
-    logInfo('twilio-webhook-success', 'Sending response', {
-      phone: wa,
-      responseLength: responseMessage.length,
-    })
+    if (messageSent) {
+      // Log outbound message only if sent successfully
+      await atCreate('Messages', {
+        tenant_id: [validTenantId], // Linked record field requires array
+        phone: wa,
+        body: responseMessage,
+        direction: 'outbound',
+        created_at: new Date().toISOString(),
+      } as any)
 
-    return new NextResponse(createTwiMLResponse(responseMessage), {
+      logInfo('twilio-webhook-success', 'Message sent via Messaging API', {
+        phone: wa,
+        responseLength: responseMessage.length,
+      })
+    } else {
+      logError('twilio-webhook', new Error('Failed to send message via Messaging API'), {
+        phone: wa,
+      })
+    }
+
+    // Step 8: Return empty TwiML (message already sent via API)
+    return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
       headers: { 'content-type': 'application/xml' },
     })
   } catch (e: any) {
