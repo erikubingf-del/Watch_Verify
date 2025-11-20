@@ -12,6 +12,26 @@ import {
   getNextPrompt,
   clearVerificationSession,
 } from '@/lib/verification-sessions'
+import {
+  getEnhancedVerificationSession,
+  createEnhancedVerificationSession,
+  updateEnhancedVerificationSession,
+  getVerificationPrompt,
+  isVerificationComplete,
+  isValidCPF,
+  maskCPF,
+} from '@/lib/enhanced-verification'
+import {
+  analyzeWatchPhoto,
+  analyzeGuaranteeCard,
+  analyzeInvoice,
+  crossReferenceDocuments,
+} from '@/lib/document-ocr'
+import {
+  generateVerificationReport,
+  generateCustomerSummary,
+  generateStoreNotification,
+} from '@/lib/verification-report'
 import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
 import {
   getBookingSession,
@@ -23,6 +43,74 @@ import {
   getBookingPrompt,
 } from '@/lib/booking-sessions'
 import { getAvailableSlots, bookAppointment } from '@/lib/scheduling'
+
+/**
+ * Upload media to Cloudinary for permanent storage
+ */
+async function uploadToCloudinary(twilioMediaUrl: string): Promise<string> {
+  try {
+    const cloudinary = require('cloudinary').v2
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    })
+
+    // Upload from Twilio URL
+    const result = await cloudinary.uploader.upload(twilioMediaUrl, {
+      folder: 'watch-verify',
+      resource_type: 'auto',
+    })
+
+    return result.secure_url
+  } catch (error: any) {
+    logError('cloudinary-upload', error)
+    throw new Error(`Failed to upload to Cloudinary: ${error.message}`)
+  }
+}
+
+/**
+ * Check if tenant has enhanced verification enabled
+ */
+async function isEnhancedVerificationEnabled(tenantId: string): Promise<boolean> {
+  try {
+    const settings = await atSelect('Settings', {
+      filterByFormula: buildFormula('tenant_id', '=', tenantId),
+      maxRecords: '1',
+    })
+
+    if (settings.length === 0) {
+      return false
+    }
+
+    return settings[0].fields.verification_enabled === true
+  } catch (error: any) {
+    logError('verification-settings-check', error)
+    return false
+  }
+}
+
+/**
+ * Check if tenant offers watch purchases
+ */
+async function offersWatchPurchase(tenantId: string): Promise<boolean> {
+  try {
+    const settings = await atSelect('Settings', {
+      filterByFormula: buildFormula('tenant_id', '=', tenantId),
+      maxRecords: '1',
+    })
+
+    if (settings.length === 0) {
+      return false
+    }
+
+    return settings[0].fields.offers_purchase === true
+  } catch (error: any) {
+    logError('purchase-settings-check', error)
+    return false
+  }
+}
 
 // Twilio sends x-www-form-urlencoded; parse using formData() in Next.js
 export async function POST(req: NextRequest) {
@@ -152,102 +240,28 @@ export async function POST(req: NextRequest) {
 
     let responseMessage = ''
 
-    // Step 5: Check if this is part of a verification workflow
-    let session = await getVerificationSession(wa)
+    // Step 5: Check for enhanced verification flow
+    const enhancedVerificationEnabled = await isEnhancedVerificationEnabled(validTenantId)
+    const offersWatchPurchaseEnabled = await offersWatchPurchase(validTenantId)
+    let enhancedSession = await getEnhancedVerificationSession(wa)
 
-    // Detect verification intent from message
-    const wantsVerification =
-      body.toLowerCase().includes('verificar') ||
-      body.toLowerCase().includes('verificação') ||
-      body.toLowerCase().includes('autenticar') ||
-      body.toLowerCase().includes('validar') ||
-      (session && session.state !== 'completed')
+    // Detect if customer wants to sell a watch
+    const wantsSellWatch =
+      body.toLowerCase().includes('vender') ||
+      body.toLowerCase().includes('comprar') && body.toLowerCase().includes('vocês') ||
+      body.toLowerCase().includes('compram') ||
+      (enhancedSession && enhancedSession.state !== 'completed')
 
-    if (wantsVerification) {
-      // Handle verification workflow
-      if (!session && numMedia === 0) {
-        // User wants to start verification
-        session = await createVerificationSession(validTenantId, wa, 'Cliente')
-        responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
-      } else if (session && numMedia > 0) {
-        // User sent a document
-        const mediaUrl = mediaUrls[0]
-
-        // Determine document type based on session state
-        if (session.state === 'awaiting_watch_photo') {
-          session = await updateVerificationSession(wa, 'watch', mediaUrl)
-          responseMessage = `✅ Foto do relógio recebida!\n\n${getNextPrompt(session!)}`
-        } else if (session.state === 'awaiting_guarantee') {
-          session = await updateVerificationSession(wa, 'guarantee', mediaUrl)
-          responseMessage = `✅ Certificado recebido!\n\n${getNextPrompt(session!)}`
-        } else if (session.state === 'awaiting_invoice') {
-          session = await updateVerificationSession(wa, 'invoice', mediaUrl)
-
-          // Check if we have all documents
-          if (isSessionComplete(session!)) {
-            responseMessage = '⏳ Analisando todos os documentos... Isso levará alguns instantes.'
-
-            // Run verification asynchronously
-            try {
-              const result = await runVerification({
-                tenantId: validTenantId,
-                customerName: session!.customerName,
-                customerPhone: wa,
-                watchPhotoUrl: session!.watchPhotoUrl,
-                guaranteeCardUrl: session!.guaranteeCardUrl,
-                invoiceUrl: session!.invoiceUrl,
-              })
-
-              // Format result message
-              let resultMessage = `\n\n📊 *RESULTADO DA VERIFICAÇÃO*\n\n`
-              resultMessage += `Relógio: ${result.brand || 'N/A'} ${result.model || ''}\n`
-              if (result.reference) resultMessage += `Referência: ${result.reference}\n`
-              if (result.serial) resultMessage += `Serial: ${result.serial}\n`
-              resultMessage += `\n*ICD Score: ${result.icd}/100*\n`
-              resultMessage += `Status: ${result.icdBand}\n\n`
-
-              if (result.status === 'approved') {
-                resultMessage += `✅ *APROVADO* - Documentação consistente\n\n`
-              } else if (result.status === 'manual_review') {
-                resultMessage += `⚠️ *REVISÃO MANUAL NECESSÁRIA*\n\n`
-              } else {
-                resultMessage += `❌ *NÃO APROVADO* - Inconsistências detectadas\n\n`
-              }
-
-              if (result.issues.length > 0) {
-                resultMessage += `Observações:\n`
-                result.issues.slice(0, 3).forEach((issue) => {
-                  resultMessage += `• ${issue}\n`
-                })
-              }
-
-              if (result.recommendations.length > 0) {
-                resultMessage += `\nRecomendações:\n`
-                result.recommendations.forEach((rec) => {
-                  resultMessage += `• ${rec}\n`
-                })
-              }
-
-              resultMessage += `\nID da verificação: ${result.verificationId}`
-
-              responseMessage += resultMessage
-
-              // Clear session
-              await clearVerificationSession(wa)
-            } catch (error: any) {
-              logError('verification-webhook', error)
-              responseMessage += `\n\n❌ Erro ao processar verificação. Por favor, tente novamente ou entre em contato com nossa equipe.`
-            }
-          }
-        }
-      } else if (session && numMedia === 0) {
-        // User sent text during verification
-        responseMessage = getNextPrompt(session)
-      } else {
-        // Start new verification
-        session = await createVerificationSession(validTenantId, wa, 'Cliente')
-        responseMessage = `✅ Vou iniciar a verificação do seu relógio!\n\n${getNextPrompt(session)}`
-      }
+    if (enhancedVerificationEnabled && offersWatchPurchaseEnabled && wantsSellWatch) {
+      // Handle enhanced verification workflow
+      responseMessage = await handleEnhancedVerification(
+        enhancedSession,
+        body,
+        numMedia,
+        mediaUrls,
+        validTenantId,
+        wa
+      )
     } else {
       // Step 6: Check if this is part of a booking workflow
       let bookingSession = await getBookingSession(wa)
@@ -351,6 +365,314 @@ export async function POST(req: NextRequest) {
       status: 500,
       headers: { 'content-type': 'application/xml' },
     })
+  }
+}
+
+// ==========================================
+// Enhanced Verification Handler
+// ==========================================
+
+async function handleEnhancedVerification(
+  session: any,
+  message: string,
+  numMedia: number,
+  mediaUrls: string[],
+  tenantId: string,
+  customerPhone: string
+): Promise<string> {
+  try {
+    // Start new session if none exists
+    if (!session) {
+      session = await createEnhancedVerificationSession(tenantId, customerPhone, 'Cliente')
+      return getVerificationPrompt(session)
+    }
+
+    const lowerMsg = message.toLowerCase()
+
+    // State: awaiting_cpf
+    if (session.state === 'awaiting_cpf') {
+      // Extract CPF from message
+      const cpf = message.replace(/\D/g, '')
+
+      if (!isValidCPF(cpf)) {
+        return 'CPF inválido. Por favor, envie um CPF válido no formato XXX.XXX.XXX-XX ou apenas números.'
+      }
+
+      // Update session with CPF
+      await updateEnhancedVerificationSession(customerPhone, {
+        cpf,
+        state: 'awaiting_watch_info',
+      })
+
+      return 'Perfeito! Qual relógio você gostaria de vender? (marca e modelo)'
+    }
+
+    // State: awaiting_watch_info
+    if (session.state === 'awaiting_watch_info') {
+      // Store customer's stated model
+      await updateEnhancedVerificationSession(customerPhone, {
+        customer_stated_model: message,
+        state: 'awaiting_watch_photo',
+      })
+
+      return 'Ótimo! Vou precisar de algumas fotos e documentos. Primeiro, envie uma foto clara do relógio, mostrando o mostrador e a caixa.'
+    }
+
+    // State: awaiting_watch_photo
+    if (session.state === 'awaiting_watch_photo') {
+      if (numMedia === 0) {
+        return 'Por favor, envie uma foto do relógio.'
+      }
+
+      // Upload to Cloudinary
+      const photoUrl = await uploadToCloudinary(mediaUrls[0])
+
+      // Analyze with GPT-4 Vision
+      const photoAnalysis = await analyzeWatchPhoto(photoUrl)
+
+      // Update session
+      await updateEnhancedVerificationSession(customerPhone, {
+        watch_photo_url: photoUrl,
+        state: 'awaiting_guarantee',
+      })
+
+      return 'Perfeito! Agora envie uma foto do certificado de garantia (guarantee card).'
+    }
+
+    // State: awaiting_guarantee
+    if (session.state === 'awaiting_guarantee') {
+      if (numMedia === 0) {
+        return 'Por favor, envie uma foto do certificado de garantia.'
+      }
+
+      // Upload to Cloudinary
+      const guaranteeUrl = await uploadToCloudinary(mediaUrls[0])
+
+      // Analyze with GPT-4 Vision
+      const guaranteeAnalysis = await analyzeGuaranteeCard(guaranteeUrl)
+
+      // Refresh session to get latest data
+      const currentSession = await getEnhancedVerificationSession(customerPhone)
+      const photoAnalysis = currentSession?.watch_photo_url
+        ? await analyzeWatchPhoto(currentSession.watch_photo_url)
+        : null
+
+      // Cross-reference: check if reference numbers match
+      if (
+        photoAnalysis?.reference_number &&
+        guaranteeAnalysis.reference_number &&
+        photoAnalysis.reference_number !== guaranteeAnalysis.reference_number
+      ) {
+        return `⚠️ Notei que o certificado indica referência **${guaranteeAnalysis.reference_number}** mas a foto mostra **${photoAnalysis.reference_number}**. Você tem certeza que enviou os documentos do relógio correto? Se sim, responda "sim" para continuar.`
+      }
+
+      // Update session
+      await updateEnhancedVerificationSession(customerPhone, {
+        guarantee_card_url: guaranteeUrl,
+        state: 'awaiting_invoice',
+      })
+
+      return 'Ótimo! Agora envie a Nota Fiscal de compra original.'
+    }
+
+    // State: awaiting_invoice
+    if (session.state === 'awaiting_invoice') {
+      if (numMedia === 0) {
+        return 'Por favor, envie a Nota Fiscal.'
+      }
+
+      // Upload to Cloudinary
+      const invoiceUrl = await uploadToCloudinary(mediaUrls[0])
+
+      // Analyze with GPT-4 Vision
+      const invoiceAnalysis = await analyzeInvoice(invoiceUrl)
+
+      // Refresh session to get all documents
+      const currentSession = await getEnhancedVerificationSession(customerPhone)
+      const photoAnalysis = currentSession?.watch_photo_url
+        ? await analyzeWatchPhoto(currentSession.watch_photo_url)
+        : null
+      const guaranteeAnalysis = currentSession?.guarantee_card_url
+        ? await analyzeGuaranteeCard(currentSession.guarantee_card_url)
+        : null
+
+      // Cross-reference: check date mismatch
+      if (guaranteeAnalysis?.purchase_date && invoiceAnalysis.invoice_date) {
+        const guaranteeDate = new Date(guaranteeAnalysis.purchase_date)
+        const invoiceDate = new Date(invoiceAnalysis.invoice_date)
+        const daysDiff = Math.abs((guaranteeDate.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24))
+
+        if (daysDiff > 60) {
+          await updateEnhancedVerificationSession(customerPhone, {
+            invoice_url: invoiceUrl,
+            state: 'awaiting_date_explanation',
+          })
+
+          return `A Nota Fiscal é de **${invoiceAnalysis.invoice_date}** mas o certificado de garantia é **${guaranteeAnalysis.purchase_date}**. Qual o motivo dessa diferença?`
+        }
+      }
+
+      // Update session
+      await updateEnhancedVerificationSession(customerPhone, {
+        invoice_url: invoiceUrl,
+        state: 'awaiting_optional_docs',
+      })
+
+      // Ask customer if they want to send additional documents or complete now
+      return `Recebi todos os documentos principais! Para fortalecer a verificação, você pode enviar documentos adicionais (opcional):
+- Fatura do cartão de crédito (comprovando a compra)
+- Comprovante de viagem (se comprou no exterior)
+- Box original do relógio
+- Outros certificados ou documentos
+
+Prefere enviar agora ou que eu envie o relatório atual para a boutique?`
+    }
+
+    // State: awaiting_date_explanation
+    if (session.state === 'awaiting_date_explanation') {
+      // Store customer's explanation
+      await updateEnhancedVerificationSession(customerPhone, {
+        date_mismatch_reason: message,
+        state: 'awaiting_optional_docs',
+      })
+
+      return `Entendi! Vou incluir essa informação no relatório. ✅
+
+Quer enviar documentos adicionais (fatura cartão, comprovante viagem, box) ou prefere que eu envie o relatório agora para a boutique?`
+    }
+
+    // State: awaiting_optional_docs
+    if (session.state === 'awaiting_optional_docs') {
+      // Customer wants to send report now
+      if (
+        lowerMsg.includes('enviar') ||
+        lowerMsg.includes('relatório') ||
+        lowerMsg.includes('agora') ||
+        lowerMsg.includes('boutique')
+      ) {
+        return await finalizeEnhancedVerification(customerPhone, tenantId)
+      }
+
+      // Customer sends additional document
+      if (numMedia > 0) {
+        const additionalUrl = await uploadToCloudinary(mediaUrls[0])
+
+        // Add to additional_documents array
+        const currentSession = await getEnhancedVerificationSession(customerPhone)
+        const additionalDocs = currentSession?.additional_documents || []
+        additionalDocs.push(additionalUrl)
+
+        await updateEnhancedVerificationSession(customerPhone, {
+          additional_documents: additionalDocs,
+        })
+
+        return `✅ Documento adicional recebido! Quer enviar mais documentos ou prefere que eu envie o relatório para a boutique?`
+      }
+
+      return `Não entendi. Responda "enviar relatório" para finalizar ou envie outro documento.`
+    }
+
+    // Fallback
+    return getVerificationPrompt(session)
+  } catch (error: any) {
+    logError('enhanced-verification-handler', error, { customerPhone })
+    return 'Desculpe, tive um problema ao processar a verificação. Vamos tentar de novo?'
+  }
+}
+
+/**
+ * Finalize verification and generate report
+ */
+async function finalizeEnhancedVerification(customerPhone: string, tenantId: string): Promise<string> {
+  try {
+    // Get session
+    const session = await getEnhancedVerificationSession(customerPhone)
+    if (!session) {
+      return 'Não encontrei sua verificação. Vamos começar de novo?'
+    }
+
+    // Update state
+    await updateEnhancedVerificationSession(customerPhone, {
+      state: 'processing',
+    })
+
+    // Analyze all documents
+    const photoAnalysis = session.watch_photo_url
+      ? await analyzeWatchPhoto(session.watch_photo_url)
+      : ({} as any)
+
+    const guaranteeAnalysis = session.guarantee_card_url
+      ? await analyzeGuaranteeCard(session.guarantee_card_url)
+      : ({} as any)
+
+    const invoiceAnalysis = session.invoice_url ? await analyzeInvoice(session.invoice_url) : ({} as any)
+
+    // Cross-reference
+    const crossReference = crossReferenceDocuments(
+      photoAnalysis,
+      guaranteeAnalysis,
+      invoiceAnalysis,
+      session.customer_stated_model || ''
+    )
+
+    // Generate report
+    const report = generateVerificationReport({
+      session,
+      photoAnalysis,
+      guaranteeAnalysis,
+      invoiceAnalysis,
+      crossReference,
+      nfValidated: null, // TODO: Add SEFAZ validation
+    })
+
+    // Store report in WatchVerify table
+    const verificationId = session.id.substring(0, 8).toUpperCase()
+
+    await atCreate('WatchVerify', {
+      tenant_id: [tenantId],
+      customer: session.customer_name,
+      phone: customerPhone,
+      cpf: session.cpf,
+      brand: photoAnalysis.brand || guaranteeAnalysis.brand || '',
+      model: photoAnalysis.model || guaranteeAnalysis.model || session.customer_stated_model || '',
+      reference: photoAnalysis.reference_number || guaranteeAnalysis.reference_number || '',
+      serial: photoAnalysis.serial_number || guaranteeAnalysis.serial_number || '',
+      status: crossReference.issues.length === 0 ? 'approved' : 'manual_review',
+      photo_url: session.watch_photo_url,
+      guarantee_url: session.guarantee_card_url,
+      invoice_url: session.invoice_url,
+      issues: crossReference.issues,
+      recommendations: crossReference.passed_checks,
+      notes: report,
+      created_at: session.created_at,
+      completed_at: new Date().toISOString(),
+    } as any)
+
+    // Send notification to store owner
+    const storeNotification = generateStoreNotification(
+      session.customer_name,
+      `${photoAnalysis.brand || ''} ${photoAnalysis.model || ''}`,
+      crossReference.issues.length === 0 ? 'approved' : 'review',
+      verificationId
+    )
+
+    // TODO: Send WhatsApp to store owner using sendWhatsAppMessage
+    logInfo('verification-complete', 'Report generated', {
+      verificationId,
+      customerPhone,
+      status: crossReference.issues.length === 0 ? 'approved' : 'review',
+    })
+
+    // Mark session as completed
+    await updateEnhancedVerificationSession(customerPhone, {
+      state: 'completed',
+    })
+
+    // Return customer summary
+    return generateCustomerSummary(session, verificationId)
+  } catch (error: any) {
+    logError('verification-finalization', error, { customerPhone })
+    return '❌ Erro ao finalizar verificação. Por favor, entre em contato com nossa equipe.'
   }
 }
 
