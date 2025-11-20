@@ -8,6 +8,7 @@
 import { searchCatalog, SearchResult, SearchOptions } from './semantic-search'
 import { logInfo } from './logger'
 import { atSelect } from '@/utils/airtable'
+import { enrichWithBrandKnowledge } from './brand-knowledge'
 
 export interface RAGContext {
   systemPrompt: string
@@ -78,8 +79,12 @@ export async function buildRAGContext(
     )
   }
 
-  // Step 3: Build system prompt with catalog context
-  const systemPrompt = buildSystemPrompt(relevantProducts, conversationContext)
+  // Step 3: Enrich with brand knowledge
+  const productTitles = relevantProducts.map(p => p.title)
+  const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
+
+  // Step 4: Build system prompt with catalog context + brand knowledge
+  const systemPrompt = buildSystemPrompt(relevantProducts, conversationContext, brandContext)
 
   return {
     systemPrompt,
@@ -185,26 +190,43 @@ function shouldPerformSearch(message: string): boolean {
 }
 
 /**
- * Build system prompt with product recommendations
+ * Build system prompt with product recommendations + brand knowledge
  */
 function buildSystemPrompt(
   products: SearchResult[],
-  conversationContext?: string
+  conversationContext?: string,
+  brandContext?: string
 ): string {
-  let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique. You are knowledgeable, professional, and helpful.
+  let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
-Your primary goal is to understand customer needs and recommend products from the catalog.
+PERSONALITY & TONE:
+- Elegant but approachable (use "você", not overly formal)
+- Warm professionalism: "Fico feliz em ajudar" ✅ not "Estou disponível para assistência" ❌
+- Concise and objective (no AI verbosity)
+- Valorize products without overselling
+- Subtle technical knowledge (mention caliber/movement naturally)
+- Customer-focused, not sales-focused
 
-Guidelines:
+CONVERSATION GUIDELINES:
 - Be warm and professional
-- Ask clarifying questions to understand budget, style preferences, and occasion
-- Use the catalog context below to make personalized recommendations
-- If multiple products match, present 2-3 options with key differentiators
-- Include prices when discussing specific products
-- Never invent products - only recommend items from the catalog context
-- If no relevant products found, ask more questions to narrow down preferences
+- Ask clarifying questions: budget, style, occasion
+- Present 2-3 options max (not overwhelming)
+- Include prices in Brazilian Reais (R$)
+- Focus on: craftsmanship, heritage, investment value (when relevant)
+- NEVER invent products - only use catalog items
+- NEVER use excessive superlatives ("INCRÍVEL", "MELHOR DO MUNDO")
+
+LANGUAGE:
+- Respond in Portuguese (Brazilian)
+- Keep messages short (2-4 sentences ideal)
+- Use luxury vocabulary subtly
 
 `
+
+  // Add brand expertise context (if available)
+  if (brandContext) {
+    prompt += brandContext
+  }
 
   // Add conversation history context
   if (conversationContext) {
@@ -236,7 +258,7 @@ Guidelines:
 
     prompt += `\nUse these products to make informed recommendations. Reference specific models when relevant.\n`
   } else {
-    prompt += `\nNo specific products match this query yet. Ask questions to understand what the customer is looking for, then make recommendations.\n`
+    prompt += `\nNo specific products match this query yet. Ask questions to understand what the customer is looking for.\n`
   }
 
   return prompt
