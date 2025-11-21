@@ -48,7 +48,7 @@ next-env.d.ts
 # OS
 Thumbs.db
 
-# Documentation (deployment guides with secrets)
+# Documentation (deployment guides with secrets - deprecated)
 DEPLOY_NOW.md
 FIX_TOKEN_NOW.md
 FIX_VERCEL_NOW.md
@@ -56,6 +56,9 @@ FIX_401_ERROR.md
 FIX_VERCEL_BUILD.md
 REDIRECT_LOOP_FIXED.md
 VERCEL_ENV_SETUP.md
+
+# Note: VERCEL_DEPLOYMENT_GUIDE.md and POST_DEPLOYMENT_CHECKLIST.md are safe to commit
+# as they use placeholders instead of real credentials
 
 # Utility scripts with hardcoded credentials (not needed for deployment)
 scripts/add-city-field.py
