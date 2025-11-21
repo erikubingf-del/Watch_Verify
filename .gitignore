@@ -56,3 +56,10 @@ FIX_401_ERROR.md
 FIX_VERCEL_BUILD.md
 REDIRECT_LOOP_FIXED.md
 VERCEL_ENV_SETUP.md
+
+# Utility scripts with hardcoded credentials (not needed for deployment)
+scripts/add-city-field.py
+scripts/check-schema.js
+scripts/fix-verification-states.py
+scripts/update-airtable-schema.py
+scripts/audit-airtable-schema.ts
