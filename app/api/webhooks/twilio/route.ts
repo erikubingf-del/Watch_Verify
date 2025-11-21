@@ -32,6 +32,7 @@ import {
   generateCustomerSummary,
   generateStoreNotification,
 } from '@/lib/verification-report'
+import { calculateLegalRisk, formatLegalRiskForAirtable } from '@/lib/legal-risk'
 import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
 import {
   getBookingSession,
@@ -508,7 +509,11 @@ async function handleSalespersonFeedback(
         }
 
         if (matchedCustomers.length === 0) {
-          matchedCustomers = await findCustomersByName(tenantId, feedbackData.customer_name)
+          matchedCustomers = await findCustomersByName(
+            tenantId,
+            feedbackData.customer_name,
+            feedbackData.city // Pass city for better matching
+          )
         }
 
         await updateFeedbackSession(salespersonPhone, {
@@ -947,6 +952,15 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
       session.customer_stated_model || ''
     )
 
+    // Calculate legal risk assessment
+    const legalRisk = calculateLegalRisk(
+      crossReference.icd,
+      crossReference,
+      photoAnalysis,
+      guaranteeAnalysis,
+      invoiceAnalysis
+    )
+
     // Generate report
     const report = generateVerificationReport({
       session,
@@ -955,6 +969,7 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
       invoiceAnalysis,
       crossReference,
       nfValidated: null, // TODO: Add SEFAZ validation
+      legalRisk,
     })
 
     // Store report in WatchVerify table
@@ -969,12 +984,13 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
       model: photoAnalysis.model || guaranteeAnalysis.model || session.customer_stated_model || '',
       reference: photoAnalysis.reference_number || guaranteeAnalysis.reference_number || '',
       serial: photoAnalysis.serial_number || guaranteeAnalysis.serial_number || '',
-      status: crossReference.issues.length === 0 ? 'approved' : 'manual_review',
+      icd: legalRisk.icd, // NEW: Store ICD score
+      status: legalRisk.color === 'red' ? 'rejected' : legalRisk.color === 'green' ? 'approved' : 'manual_review',
       photo_url: session.watch_photo_url,
       guarantee_url: session.guarantee_card_url,
       invoice_url: session.invoice_url,
-      issues: crossReference.issues,
-      recommendations: crossReference.passed_checks,
+      issues: JSON.stringify(legalRisk.criticalIssues), // Store as JSON
+      recommendations: JSON.stringify(legalRisk.warnings), // Store as JSON
       notes: report,
       created_at: session.created_at,
       completed_at: new Date().toISOString(),

@@ -11,6 +11,7 @@ import {
   InvoiceAnalysis,
   CrossReferenceResult,
 } from './document-ocr'
+import { calculateLegalRisk, type LegalRiskAssessment } from './legal-risk'
 
 export interface VerificationReportData {
   session: EnhancedVerificationSession
@@ -19,6 +20,7 @@ export interface VerificationReportData {
   invoiceAnalysis: InvoiceAnalysis
   crossReference: CrossReferenceResult
   nfValidated?: boolean | null
+  legalRisk?: LegalRiskAssessment // NEW: Legal risk assessment
 }
 
 /**
@@ -32,6 +34,7 @@ export function generateVerificationReport(data: VerificationReportData): string
     invoiceAnalysis,
     crossReference,
     nfValidated,
+    legalRisk,
   } = data
 
   const verificationId = session.id.substring(0, 8).toUpperCase()
@@ -102,6 +105,31 @@ ${docs.join('\n')}
 
   if (session.date_mismatch_reason) {
     report += `\n**Explicação do cliente sobre diferença de datas:** ${session.date_mismatch_reason}\n`
+  }
+
+  // Legal Risk Assessment (NEW)
+  if (legalRisk) {
+    report += `\n---\n\n## ⚖️ AVALIAÇÃO DE RISCO LEGAL\n\n`
+
+    report += `**Categoria:** ${legalRisk.icon} **${legalRisk.label}**\n`
+    report += `**Índice de Consistência Documental (ICD):** ${legalRisk.icd}/100\n`
+    report += `**Nível de Risco:** ${legalRisk.color === 'green' ? '🟢 BAIXO' : legalRisk.color === 'yellow' ? '🟡 MÉDIO' : legalRisk.color === 'orange' ? '🟠 ALTO' : '🔴 CRÍTICO'}\n\n`
+
+    report += `**Recomendação:**\n${legalRisk.recommendation}\n`
+
+    if (legalRisk.criticalIssues.length > 0) {
+      report += `\n**🚨 Problemas Críticos:**\n`
+      legalRisk.criticalIssues.forEach((issue) => {
+        report += `- ${issue}\n`
+      })
+    }
+
+    if (legalRisk.warnings.length > 0) {
+      report += `\n**⚠️ Atenção:**\n`
+      legalRisk.warnings.forEach((warning) => {
+        report += `- ${warning}\n`
+      })
+    }
   }
 
   // NF Validation section (Brazil only)

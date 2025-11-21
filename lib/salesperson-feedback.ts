@@ -11,6 +11,7 @@ import { logInfo, logError } from './logger'
 export interface FeedbackData {
   customer_name: string
   customer_phone?: string
+  city?: string // NEW: Customer's city for better matching
   product_interest?: string
   budget_min?: number
   budget_max?: number
@@ -110,6 +111,7 @@ Return ONLY a valid JSON object with these fields (use null if not mentioned):
 {
   "customer_name": "string or null",
   "customer_phone": "string or null (format +55XXXXXXXXXXX)",
+  "city": "string or null (customer's city if mentioned)",
   "product_interest": "string or null",
   "budget_min": number or null,
   "budget_max": number or null,
@@ -123,6 +125,7 @@ Return ONLY a valid JSON object with these fields (use null if not mentioned):
 
 Rules:
 - Extract only what was explicitly mentioned
+- Extract city if mentioned (e.g., "João de São Paulo" → city: "São Paulo")
 - Convert dates to standardized formats (birthday: MM-DD)
 - Extract budget ranges if mentioned ("40-60k" → min: 40000, max: 60000)
 - Identify product brands and models
@@ -161,38 +164,102 @@ Return ONLY the JSON object, no markdown, no explanations.`
 }
 
 /**
- * Search for customers matching name
+ * Search for customers matching name with city filtering for better accuracy
  */
 export async function findCustomersByName(
   tenantId: string,
-  customerName: string
+  customerName: string,
+  city?: string
 ): Promise<any[]> {
   try {
-    // First try exact match (case-insensitive)
+    const escapedName = customerName.replace(/'/g, "\\'")
+    const firstName = customerName.split(' ')[0].replace(/'/g, "\\'")
+
+    // Priority 1: Exact name + city match (highest confidence)
+    if (city) {
+      const escapedCity = city.replace(/'/g, "\\'")
+      const exactMatchWithCity = await atSelect('Customers', {
+        filterByFormula: `AND({tenant_id}='${tenantId}', LOWER({name})=LOWER('${escapedName}'), LOWER({city})=LOWER('${escapedCity}'))`,
+      })
+
+      if (exactMatchWithCity.length > 0) {
+        logInfo('customer-search', 'Exact match with city found', {
+          searchName: customerName,
+          city,
+          matches: exactMatchWithCity.length,
+        })
+        return exactMatchWithCity
+      }
+    }
+
+    // Priority 2: Exact name match (any city)
     const exactMatches = await atSelect('Customers', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', LOWER({name})=LOWER('${customerName.replace(/'/g, "\\'")}'))`,
+      filterByFormula: `AND({tenant_id}='${tenantId}', LOWER({name})=LOWER('${escapedName}'))`,
     })
 
-    if (exactMatches.length > 0) {
+    if (exactMatches.length === 1) {
+      // Single exact match - return it
+      logInfo('customer-search', 'Single exact name match found', {
+        searchName: customerName,
+        matches: 1,
+      })
       return exactMatches
     }
 
-    // Try partial match (first word)
-    const firstName = customerName.split(' ')[0]
+    if (exactMatches.length > 1 && city) {
+      // Multiple exact matches, filter by city
+      const cityMatches = exactMatches.filter(
+        (c) => c.fields.city && c.fields.city.toLowerCase() === city.toLowerCase()
+      )
+      if (cityMatches.length > 0) {
+        logInfo('customer-search', 'Filtered exact matches by city', {
+          searchName: customerName,
+          city,
+          totalMatches: exactMatches.length,
+          cityMatches: cityMatches.length,
+        })
+        return cityMatches
+      }
+    }
+
+    if (exactMatches.length > 0) {
+      // Return all exact matches for disambiguation
+      return exactMatches
+    }
+
+    // Priority 3: Partial name + city match
+    if (city) {
+      const escapedCity = city.replace(/'/g, "\\'")
+      const partialMatchWithCity = await atSelect('Customers', {
+        filterByFormula: `AND({tenant_id}='${tenantId}', SEARCH(LOWER('${firstName}'), LOWER({name})) > 0, LOWER({city})=LOWER('${escapedCity}'))`,
+        maxRecords: '5',
+      })
+
+      if (partialMatchWithCity.length > 0) {
+        logInfo('customer-search', 'Partial match with city found', {
+          searchName: customerName,
+          city,
+          matches: partialMatchWithCity.length,
+        })
+        return partialMatchWithCity
+      }
+    }
+
+    // Priority 4: Partial name match (any city)
     const partialMatches = await atSelect('Customers', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', SEARCH(LOWER('${firstName.replace(/'/g, "\\'")}'), LOWER({name})) > 0)`,
+      filterByFormula: `AND({tenant_id}='${tenantId}', SEARCH(LOWER('${firstName}'), LOWER({name})) > 0)`,
       maxRecords: '5', // Limit to 5 matches
     })
 
     logInfo('customer-search', 'Customer search results', {
       searchName: customerName,
-      exactMatches: exactMatches.length,
+      city: city || 'not provided',
       partialMatches: partialMatches.length,
     })
 
     return partialMatches
   } catch (error: any) {
-    logError('customer-search', error, { customerName })
+    logError('customer-search', error, { customerName, city })
     return []
   }
 }
@@ -359,6 +426,10 @@ export async function updateCustomerWithFeedback(
       updateData.birthday = feedbackData.birthday
     }
 
+    if (feedbackData.city) {
+      updateData.city = feedbackData.city
+    }
+
     if (feedbackData.hobbies && feedbackData.hobbies.length > 0) {
       updateData.hobbies = feedbackData.hobbies.join(', ')
     }
@@ -473,14 +544,15 @@ Return ONLY the message text, no quotes.`
 }
 
 /**
- * Format disambiguation options
+ * Format disambiguation options with city for better identification
  */
 export function formatDisambiguationOptions(customers: any[]): string {
   let message = `Encontrei ${customers.length} clientes com nome similar. Qual deles?\n\n`
 
   customers.forEach((customer, index) => {
     const num = index + 1
-    message += `${num}️⃣ ${customer.fields.name} - ${customer.fields.phone}\n`
+    const cityInfo = customer.fields.city ? ` - ${customer.fields.city}` : ''
+    message += `${num}️⃣ ${customer.fields.name}${cityInfo} - ${customer.fields.phone}\n`
 
     if (customer.fields.last_visit) {
       message += `   Última visita: ${customer.fields.last_visit}\n`
