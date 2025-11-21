@@ -12,11 +12,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const navItems = [
     { href: '/dashboard', label: 'Home', icon: '🏠' },
+    { href: '/dashboard/conversations', label: 'Conversas', icon: '💬' },
     { href: '/dashboard/catalog', label: 'Catálogo', icon: '📦' },
     { href: '/dashboard/verifications', label: 'Verificações', icon: '✅' },
     { href: '/dashboard/analytics', label: 'Analytics', icon: '📊' },
     { href: '/dashboard/customers', label: 'Clientes', icon: '👤' },
-    { href: '/dashboard/messages', label: 'Mensagens', icon: '💬' },
+    { href: '/dashboard/messages', label: 'Mensagens', icon: '📧' },
     { href: '/dashboard/settings', label: 'Configurações', icon: '⚙️' },
   ]
 
