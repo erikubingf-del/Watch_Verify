@@ -39,6 +39,7 @@ export interface FeedbackSession {
     | 'awaiting_extraction'
     | 'awaiting_disambiguation'
     | 'awaiting_confirmation'
+    | 'awaiting_new_customer_confirm'
     | 'awaiting_follow_up'
     | 'completed'
     | 'cancelled'
