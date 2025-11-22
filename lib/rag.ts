@@ -15,6 +15,8 @@ export interface RAGContext {
   relevantProducts: SearchResult[]
   searchPerformed: boolean
   conversationContext?: string
+  customerName?: string
+  conversationGapHours?: number
 }
 
 export interface RAGOptions {
@@ -41,7 +43,35 @@ export async function buildRAGContext(
     searchOptions = {},
   } = options
 
-  // Step 1: Semantic search for relevant products
+  // Step 1: Get customer information (name + last interaction time)
+  let customerName: string | undefined
+  let conversationGapHours: number | undefined
+
+  if (customerPhone && tenantId) {
+    try {
+      const customers = await atSelect('Customers', {
+        filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}')`,
+        maxRecords: '1',
+      })
+
+      if (customers.length > 0) {
+        const customerFields = customers[0].fields as any
+        customerName = customerFields.name
+
+        // Calculate conversation gap
+        const lastInteraction = customerFields.last_interaction
+        if (lastInteraction) {
+          const lastTime = new Date(lastInteraction).getTime()
+          const now = Date.now()
+          conversationGapHours = (now - lastTime) / (1000 * 60 * 60) // Convert ms to hours
+        }
+      }
+    } catch (error: any) {
+      logInfo('rag-customer-fetch', 'Failed to fetch customer info', { error: error.message })
+    }
+  }
+
+  // Step 2: Semantic search for relevant products
   let relevantProducts: SearchResult[] = []
   let searchPerformed = false
 
@@ -68,7 +98,7 @@ export async function buildRAGContext(
     }
   }
 
-  // Step 2: Build conversation context (optional)
+  // Step 3: Build conversation context (optional)
   let conversationContext = ''
 
   if (includeConversationHistory && customerPhone && tenantId) {
@@ -79,7 +109,7 @@ export async function buildRAGContext(
     )
   }
 
-  // Step 3: Get available brands from catalog
+  // Step 4: Get available brands from catalog
   let availableBrands: string[] = []
   if (tenantId) {
     try {
@@ -94,18 +124,27 @@ export async function buildRAGContext(
     }
   }
 
-  // Step 4: Enrich with brand knowledge
+  // Step 5: Enrich with brand knowledge
   const productTitles = relevantProducts.map(p => p.title)
   const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
 
-  // Step 5: Build system prompt with catalog context + brand knowledge
-  const systemPrompt = buildSystemPrompt(relevantProducts, conversationContext, brandContext, availableBrands)
+  // Step 6: Build system prompt with catalog context + brand knowledge
+  const systemPrompt = buildSystemPrompt(
+    relevantProducts,
+    conversationContext,
+    brandContext,
+    availableBrands,
+    customerName,
+    conversationGapHours
+  )
 
   return {
     systemPrompt,
     relevantProducts,
     searchPerformed,
     conversationContext,
+    customerName,
+    conversationGapHours,
   }
 }
 
@@ -211,7 +250,9 @@ function buildSystemPrompt(
   products: SearchResult[],
   conversationContext?: string,
   brandContext?: string,
-  availableBrands?: string[]
+  availableBrands?: string[],
+  customerName?: string,
+  conversationGapHours?: number
 ): string {
   let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
@@ -223,6 +264,27 @@ PERSONALITY & TONE:
 - Subtle technical knowledge (mention caliber/movement naturally)
 - Customer-focused, not sales-focused
 
+CUSTOMER NAME USAGE (CRITICAL):
+${customerName
+  ? `- Customer's name is: ${customerName}
+- ALWAYS use their name naturally: "Olá ${customerName}!", "Posso ajudar, ${customerName}?", "Claro, ${customerName}!"
+- Make them feel known and valued by using their name throughout
+`
+  : `- Customer has NO name on record yet
+- Early in conversation, ask politely: "Como posso te chamar?" or "Qual seu nome?"
+- Once they tell you, use it immediately: "Prazer, [name]! Como posso ajudar?"
+- This builds personal connection (luxury service standard)
+`}
+GREETING RULES:
+${conversationGapHours !== undefined && conversationGapHours >= 2
+  ? `- Last conversation was ${conversationGapHours.toFixed(1)} hours ago (>2 hours)
+- You MAY restart with "Olá${customerName ? ` ${customerName}` : ''}!" (natural human behavior)
+- Then ask: "Como posso ajudar hoje?" (fresh start)
+`
+  : `- Customer is actively engaged in conversation
+- DO NOT restart with "Olá!" mid-conversation (feels robotic)
+- Continue naturally from previous context
+`}
 CONVERSATION GUIDELINES:
 - Be warm and professional
 - Present 2-3 options max (not overwhelming)
