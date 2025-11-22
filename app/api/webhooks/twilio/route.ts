@@ -1094,13 +1094,13 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
       }
 
       // Check if invoice mentions watch/relógio at all
-      const hasWatchReference = invoiceAnalysis.items.some(item =>
+      const hasWatchReference = invoiceAnalysis.items?.some(item =>
         item.toLowerCase().includes('relógio') ||
         item.toLowerCase().includes('relogio') ||
         item.toLowerCase().includes('watch')
       )
 
-      if (!hasWatchReference && invoiceAnalysis.items.length > 0) {
+      if (!hasWatchReference && invoiceAnalysis.items && invoiceAnalysis.items.length > 0) {
         invoiceMissingDetails.push('- Nota Fiscal não menciona especificamente "relógio"')
       }
 

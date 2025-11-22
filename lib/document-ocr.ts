@@ -56,6 +56,7 @@ export interface InvoiceAnalysis {
   currency?: string
   valid?: boolean
   hasSerial?: boolean  // Used in code
+  items?: string[]  // Array of item descriptions from invoice
 }
 
 /**
