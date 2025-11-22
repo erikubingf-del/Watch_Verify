@@ -321,6 +321,42 @@ export async function POST(req: NextRequest) {
       const offersWatchPurchaseEnabled = await offersWatchPurchase(validTenantId)
       let enhancedSession = await getEnhancedVerificationSession(wa)
 
+      // Check if AI just offered verification in the last message (to detect affirmative responses)
+      let aiOfferedVerification = false
+      if (!enhancedSession) {
+        try {
+          const recentMessages = await atSelect('Messages', {
+            filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
+            sort: [{ field: 'created_at', direction: 'desc' }],
+            maxRecords: 2,
+          })
+
+          // Check if the last AI message (most recent outbound) offered verification
+          const lastAiMessage = recentMessages.find((m: any) => m.fields.direction === 'outbound')
+          if (lastAiMessage) {
+            const lastAiBody = (lastAiMessage.fields.body || '').toLowerCase()
+            aiOfferedVerification =
+              lastAiBody.includes('posso ajudar com a verificação') ||
+              lastAiBody.includes('posso verificar') ||
+              lastAiBody.includes('verificação/autenticação')
+          }
+        } catch (error) {
+          logError('verification-context-check', error as Error, { phone: wa })
+        }
+      }
+
+      // Detect affirmative response to verification offer
+      const isAffirmativeResponse =
+        body.toLowerCase() === 'ok' ||
+        body.toLowerCase() === 'sim' ||
+        body.toLowerCase() === 'pode ser' ||
+        body.toLowerCase() === 'vamos lá' ||
+        body.toLowerCase() === 'vamos' ||
+        body.toLowerCase() === 'claro' ||
+        body.toLowerCase() === 'quero' ||
+        body.toLowerCase() === 's' ||
+        body.toLowerCase() === 'yes'
+
       // Detect if customer wants to sell a watch OR if active verification session exists
       const wantsSellWatch =
         body.toLowerCase().includes('vender') ||
@@ -328,7 +364,9 @@ export async function POST(req: NextRequest) {
         body.toLowerCase().includes('compram') ||
         (enhancedSession && enhancedSession.state !== 'completed') ||
         // CRITICAL: If session exists and customer sends media, continue verification flow
-        (enhancedSession && numMedia > 0)
+        (enhancedSession && numMedia > 0) ||
+        // CRITICAL: If AI offered verification and customer gave affirmative response
+        (aiOfferedVerification && isAffirmativeResponse)
 
       if (enhancedVerificationEnabled && offersWatchPurchaseEnabled && wantsSellWatch) {
         // Handle enhanced verification workflow

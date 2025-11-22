@@ -238,7 +238,24 @@ export async function updateEnhancedVerificationSession(
 export function getVerificationPrompt(session: EnhancedVerificationSession): string {
   switch (session.state) {
     case 'awaiting_cpf':
-      return 'Perfeito! Para iniciar a verificação, preciso do seu CPF.'
+      return `Ótimo! Vou iniciar o processo de verificação do seu relógio. 📋
+
+*O que vou precisar:*
+✅ Seu CPF (para o relatório)
+📸 Foto clara do relógio (mostrador e caixa)
+📄 Certificado de garantia (guarantee card)
+🧾 Nota Fiscal original
+
+*Documentos opcionais* (fortalecem a análise):
+• Fatura do cartão de crédito
+• Box original
+• Certificados adicionais
+
+Se alguma informação estiver faltando, não tem problema - podemos prosseguir com o que você tem disponível e documentar no relatório.
+
+*Vamos começar?*
+
+Para iniciar, me envie seu CPF.`
 
     case 'awaiting_watch_info':
       return 'Obrigado! Agora, qual relógio você gostaria de vender? (marca e modelo)'
