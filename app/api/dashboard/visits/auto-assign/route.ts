@@ -29,7 +29,7 @@ export async function POST() {
         {tenant_id} = '${tenantId}',
         OR({salesperson_id} = BLANK(), {salesperson_id} = '')
       )`,
-      sort: [{ field: 'scheduled_at', direction: 'asc' }]
+      sort: JSON.stringify([{ field: 'scheduled_at', direction: 'asc' }])
     })
 
     if (unassignedAppointments.length === 0) {
