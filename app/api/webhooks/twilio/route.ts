@@ -329,8 +329,8 @@ export async function POST(req: NextRequest) {
           // Current message is already in DB, so we need at least 3 messages to find the last AI response
           const recentMessages = await atSelect('Messages', {
             filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
-            sort: [{ field: 'created_at', direction: 'desc' }],
-            maxRecords: 5, // Increased from 2 to ensure we get the AI's last message
+            sort: '[{"field":"created_at","direction":"desc"}]',
+            maxRecords: '5', // Increased from 2 to ensure we get the AI's last message
           })
 
           // Check if the last AI message (most recent outbound) offered verification
