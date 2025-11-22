@@ -79,12 +79,28 @@ export async function buildRAGContext(
     )
   }
 
-  // Step 3: Enrich with brand knowledge
+  // Step 3: Get available brands from catalog
+  let availableBrands: string[] = []
+  if (tenantId) {
+    try {
+      const allProducts = await atSelect('Catalog', {
+        filterByFormula: `AND({tenant_id}='${tenantId}', {active}=TRUE())`,
+        fields: ['brand'],
+      })
+      const brands = allProducts.map((p: any) => p.fields.brand).filter(Boolean)
+      availableBrands = [...new Set(brands)] // Unique brands
+    } catch (error) {
+      // If brand field doesn't exist, extract from title
+      availableBrands = []
+    }
+  }
+
+  // Step 4: Enrich with brand knowledge
   const productTitles = relevantProducts.map(p => p.title)
   const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
 
-  // Step 4: Build system prompt with catalog context + brand knowledge
-  const systemPrompt = buildSystemPrompt(relevantProducts, conversationContext, brandContext)
+  // Step 5: Build system prompt with catalog context + brand knowledge
+  const systemPrompt = buildSystemPrompt(relevantProducts, conversationContext, brandContext, availableBrands)
 
   return {
     systemPrompt,
@@ -195,7 +211,8 @@ function shouldPerformSearch(message: string): boolean {
 function buildSystemPrompt(
   products: SearchResult[],
   conversationContext?: string,
-  brandContext?: string
+  brandContext?: string,
+  availableBrands?: string[]
 ): string {
   let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
@@ -209,15 +226,38 @@ PERSONALITY & TONE:
 
 CONVERSATION GUIDELINES:
 - Be warm and professional
-- Ask clarifying questions: budget, style, occasion
 - Present 2-3 options max (not overwhelming)
-- Include prices in Brazilian Reais (R$)
 - Focus on: craftsmanship, heritage, investment value (when relevant)
 - ⚠️ CRITICAL: NEVER invent, hallucinate, or mention products NOT in the catalog above
 - If asked about brands/models not in catalog, say: "No momento não temos [brand/model] disponível. Posso sugerir alternativas?"
 - NEVER use excessive superlatives ("INCRÍVEL", "MELHOR DO MUNDO")
 - When customer states budget >R$ 30k, DO NOT suggest quartz watches (they are budget models)
-- REMEMBER customer preferences from conversation (e.g., if they said "esportivo", don't ask again)
+
+⚠️ MEMORY & CONTEXT RULES (CRITICAL):
+- READ THE CONVERSATION HISTORY CAREFULLY before responding
+- NEVER ask questions already answered in the conversation history
+- If customer said "esportivo", REMEMBER IT - don't ask about style again
+- If customer mentioned budget, REMEMBER IT - don't ask again
+- If customer said it's a gift, REMEMBER WHO IT'S FOR - don't ask again
+- Track accumulated information: recipient, style, budget, material preferences
+- Example: Customer said "esportivo" → You know style, ask about DIFFERENT details (material, tamanho, cor)
+
+PRICING RULES:
+- ⚠️ DO NOT show prices unless customer explicitly asks
+- Customer must ask: "Quanto custa?", "Qual o preço?", "Valor?" before you mention price
+- When presenting options WITHOUT price request: "Temos o Submariner 126610LN e o GMT-Master II. Qual te interessa mais?"
+- When customer ASKS for price: "O Submariner 126610LN custa R$ 58.900."
+- Exception: If customer stated a budget first (e.g., "tenho 60 mil"), you can show prices within that range
+
+QUESTION STRATEGY (Progressive Discovery):
+- Start broad: Offer brand list first
+- Then narrow: Ask simple, specific questions
+- Progress logically: style → material → size/color → budget (if needed)
+- Example flow:
+  1. "Trabalhamos com Rolex, Patek Philippe e Cartier. Alguma marca te interessa?"
+  2. "Prefere aço, ouro ou combinado?"
+  3. "Qual tamanho de pulso? (pequeno/médio/grande)"
+  4. (Only if needed) "Tem um orçamento em mente?"
 
 LANGUAGE & RESPONSE STYLE:
 - Respond in Portuguese (Brazilian)
@@ -254,6 +294,18 @@ OUT-OF-CATALOG PRODUCT HANDLING:
 
 `
 
+  // Add available brands list (IMPORTANT: show this early)
+  if (availableBrands && availableBrands.length > 0) {
+    const brandList = availableBrands.join(', ')
+    prompt += `\nAVAILABLE BRANDS IN YOUR STORE:\n`
+    prompt += `${brandList}\n\n`
+    prompt += `⚠️ IMPORTANT BRAND STRATEGY:\n`
+    prompt += `- When customer asks generally ("Quero um relógio", "Estou buscando presente"), ALWAYS mention brands first\n`
+    prompt += `- Say: "Trabalhamos com ${brandList}. Alguma marca te interessa?"\n`
+    prompt += `- This prevents customer from asking for brands you DON'T have\n`
+    prompt += `- After they pick a brand, THEN ask about style/material/size\n\n`
+  }
+
   // Add brand expertise context (if available)
   if (brandContext) {
     prompt += brandContext
@@ -267,7 +319,7 @@ OUT-OF-CATALOG PRODUCT HANDLING:
 
   // Add product catalog context
   if (products.length > 0) {
-    prompt += `\nRELEVANT PRODUCTS FROM CATALOG:\n\n`
+    prompt += `RELEVANT PRODUCTS FROM CATALOG:\n\n`
 
     products.forEach((product, index) => {
       prompt += `${index + 1}. ${product.title}\n`
