@@ -21,7 +21,7 @@ export async function GET() {
     // Fetch appointments
     const appointments = await atSelect('Appointments', {
       filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: [{ field: 'scheduled_at', direction: 'asc' }]
+      sort: JSON.stringify([{ field: 'scheduled_at', direction: 'asc' }])
     })
 
     // Map to frontend format

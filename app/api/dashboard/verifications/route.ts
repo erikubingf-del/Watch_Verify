@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     // Fetch verifications
     const verifications = await atSelect('WatchVerify', {
       filterByFormula: buildFormula('tenant_id', '=', tenantId),
-      maxRecords: limit,
+      maxRecords: String(limit),
       sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
     })
 

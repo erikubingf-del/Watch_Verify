@@ -21,7 +21,7 @@ export async function GET() {
     // Fetch all messages for this tenant
     const messages = await atSelect('Messages', {
       filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: [{ field: 'timestamp', direction: 'desc' }]
+      sort: JSON.stringify([{ field: 'timestamp', direction: 'desc' }])
     })
 
     // Fetch appointments to check for scheduled visits

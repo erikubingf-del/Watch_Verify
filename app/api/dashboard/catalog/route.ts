@@ -20,7 +20,7 @@ export async function GET() {
     // Fetch products
     const products = await atSelect('Catalog', {
       filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: [{ field: 'created_at', direction: 'desc' }]
+      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }])
     })
 
     // Map to frontend format
