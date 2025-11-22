@@ -25,6 +25,7 @@ export interface EnhancedVerificationSession {
     | 'awaiting_watch_photo'
     | 'awaiting_guarantee'
     | 'awaiting_invoice'
+    | 'awaiting_date_explanation'
     | 'awaiting_optional_docs'
     | 'processing'
     | 'completed'
