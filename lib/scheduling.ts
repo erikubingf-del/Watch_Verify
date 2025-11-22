@@ -287,22 +287,28 @@ export async function bookAppointment(
       // Update existing customer
       const customer = existingCustomers[0]
       const currentInterests = customer.fields.interests || []
-      const updatedInterests = productInterest && !currentInterests.includes(productInterest)
-        ? [...currentInterests, productInterest]
-        : currentInterests
+      const currentInterestsAll = customer.fields.interests_all || []
+
+      // Add product interest to both lists if provided and not duplicate
+      const newInterest = productInterest && !currentInterestsAll.includes(productInterest) ? [productInterest] : []
+      const updatedInterestsAll = [...currentInterestsAll, ...newInterest]
+      const updatedInterestsRecent = updatedInterestsAll.slice(-5) // Last 5 for campaigns
 
       await atUpdate('Customers', customer.id, {
         name: customerName,
         last_interaction: new Date().toISOString(),
-        interests: updatedInterests,
+        interests: updatedInterestsRecent,
+        interests_all: updatedInterestsAll,
       } as any)
     } else {
       // Create new customer
+      const initialInterests = productInterest ? [productInterest] : []
       await atCreate('Customers', {
         tenant_id: [tenantId],
         phone: customerPhone,
         name: customerName,
-        interests: productInterest ? [productInterest] : [],
+        interests: initialInterests, // Recent (same as all initially)
+        interests_all: initialInterests, // Historical
         created_at: new Date().toISOString(),
         last_interaction: new Date().toISOString(),
       } as any)

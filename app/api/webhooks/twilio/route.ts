@@ -396,20 +396,31 @@ export async function POST(req: NextRequest) {
                 // Update existing customer interests
                 const customer = existingCustomers[0]
                 const currentInterests = customer.fields.interests || []
-                const newInterests = productTitles.filter(title => !currentInterests.includes(title))
+                const currentInterestsAll = customer.fields.interests_all || []
 
-                if (newInterests.length > 0) {
-                  const updatedInterests = [...currentInterests, ...newInterests].slice(0, 10) // Limit to 10 interests
+                // Filter out duplicates from new interests
+                const newInterests = productTitles.filter(title => !currentInterestsAll.includes(title))
+
+                if (newInterests.length > 0 || productTitles.length > 0) {
+                  // interests_all: Keep growing list (no limit for historical tracking)
+                  const updatedInterestsAll = [...currentInterestsAll, ...newInterests]
+
+                  // interests: Last 5 only (for campaigns and priority)
+                  // Add new interests to the END, then take last 5
+                  const allInterestsCombined = [...currentInterestsAll, ...newInterests]
+                  const updatedInterestsRecent = allInterestsCombined.slice(-5) // Last 5
 
                   await atUpdate('Customers', customer.id, {
-                    interests: updatedInterests,
+                    interests: updatedInterestsRecent,
+                    interests_all: updatedInterestsAll,
                     last_interaction: new Date().toISOString(),
                   } as any)
 
                   logInfo('customer-interest-tracked', 'Updated customer interests', {
                     phone: wa,
                     newInterests: newInterests.length,
-                    totalInterests: updatedInterests.length,
+                    totalInterestsAll: updatedInterestsAll.length,
+                    recentInterests: updatedInterestsRecent.length,
                   })
                 }
               } else {
@@ -418,7 +429,8 @@ export async function POST(req: NextRequest) {
                   tenant_id: [validTenantId],
                   phone: wa,
                   name: '', // Will be filled later during booking or feedback
-                  interests: productTitles,
+                  interests: productTitles, // Recent (same as all initially)
+                  interests_all: productTitles, // Historical (all interests ever)
                   created_at: new Date().toISOString(),
                   last_interaction: new Date().toISOString(),
                 } as any)
