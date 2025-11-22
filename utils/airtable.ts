@@ -82,6 +82,33 @@ export async function atUpdate<T=any>(table: string, id: string, fields: Partial
   })
 }
 
+export async function atGet<T=any>(table: string, id: string): Promise<Rec<T>> {
+  return withRetry(async () => {
+    const res = await fetch(`${AT_URL(table)}/${id}`, {
+      headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` }
+    })
+    if (!res.ok) {
+      const errorText = await res.text()
+      throw new Error(`Airtable get ${table}/${id} → ${res.status}: ${errorText}`)
+    }
+    return await res.json()
+  })
+}
+
+export async function atDelete(table: string, id: string): Promise<{ deleted: boolean; id: string }> {
+  return withRetry(async () => {
+    const res = await fetch(`${AT_URL(table)}/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` }
+    })
+    if (!res.ok) {
+      const errorText = await res.text()
+      throw new Error(`Airtable delete ${table}/${id} → ${res.status}: ${errorText}`)
+    }
+    return await res.json()
+  })
+}
+
 /**
  * Build safe Airtable formula with injection protection
  * Use this instead of manual string concatenation
