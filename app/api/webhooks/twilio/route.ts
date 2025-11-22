@@ -1311,7 +1311,7 @@ async function extractCustomerName(customerMessage: string, aiResponse: string):
     }
 
     // Use GPT to extract name from customer's message
-    const { chat } = await import('@/lib/openai')
+    const { chat } = await import('@/utils/openai')
     const extraction = await chat(
       [
         {
