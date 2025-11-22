@@ -357,8 +357,20 @@ export async function POST(req: NextRequest) {
       } else {
         // Step 7: Regular conversation with RAG (product recommendations)
         try {
+          // Handle media-only messages (photos without text)
+          let messageContent = body
+          if (numMedia > 0 && (!body || body.trim().length === 0)) {
+            // User sent media without text - create descriptive message for context
+            messageContent = 'Enviei uma foto'
+            logInfo('media-only-message', 'Handling media-only message', {
+              phone: wa,
+              numMedia,
+              mediaUrl: mediaUrls[0],
+            })
+          }
+
           // Build RAG context with semantic search
-          const ragContext = await buildRAGContext(body, {
+          const ragContext = await buildRAGContext(messageContent, {
             tenantId: validTenantId,
             customerPhone: wa,
             includeConversationHistory: true,
@@ -366,13 +378,18 @@ export async function POST(req: NextRequest) {
           })
 
           // Generate AI response with catalog context
+          // Include media URL in the user message if present
+          const userMessage = numMedia > 0
+            ? `${messageContent}\n\n[Foto recebida: ${mediaUrls[0]}]`
+            : messageContent
+
           responseMessage = await chat(
             [
               {
                 role: 'system',
                 content: ragContext.systemPrompt,
               },
-              { role: 'user', content: body },
+              { role: 'user', content: userMessage },
             ],
             0.65
           )
