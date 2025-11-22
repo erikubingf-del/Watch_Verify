@@ -285,8 +285,10 @@ export interface CrossReferenceResult {
   model_match: boolean
   model_mismatch_details?: string
   issues: string[]
+  criticalIssues: string[] // Alias for issues (used by legal-risk)
   warnings: string[]
   passed_checks: string[]
+  passedChecks: string[] // Alias for passed_checks (used by legal-risk)
 }
 
 export function crossReferenceDocuments(
@@ -377,7 +379,9 @@ export function crossReferenceDocuments(
     model_match,
     model_mismatch_details: !model_match ? warnings.join('; ') : undefined,
     issues,
+    criticalIssues: issues, // Alias for legal-risk compatibility
     warnings,
     passed_checks: passed,
+    passedChecks: passed, // Alias for legal-risk compatibility
   }
 }

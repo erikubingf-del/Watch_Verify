@@ -33,6 +33,7 @@ import {
   generateStoreNotification,
 } from '@/lib/verification-report'
 import { calculateLegalRisk, formatLegalRiskForAirtable } from '@/lib/legal-risk'
+import { calcICD } from '@/utils/icdCalculator'
 import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
 import {
   getBookingSession,
@@ -958,9 +959,18 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
       session.customer_stated_model || ''
     )
 
+    // Calculate ICD score
+    const { score: icd, band: icdBand } = calcICD({
+      nf_missing: !invoiceAnalysis,
+      nf_invalid: invoiceAnalysis ? !invoiceAnalysis.valid : false,
+      serial_mismatch: !crossReference.serial_match,
+      nfse_missing: !guaranteeAnalysis,
+      history_inconsistent: !crossReference.model_match || !crossReference.date_match,
+    })
+
     // Calculate legal risk assessment
     const legalRisk = calculateLegalRisk(
-      crossReference.icd,
+      icd,
       crossReference,
       photoAnalysis,
       guaranteeAnalysis,
