@@ -325,10 +325,12 @@ export async function POST(req: NextRequest) {
       let aiOfferedVerification = false
       if (!enhancedSession) {
         try {
+          // CRITICAL FIX: Fetch more messages to account for the one we just logged
+          // Current message is already in DB, so we need at least 3 messages to find the last AI response
           const recentMessages = await atSelect('Messages', {
             filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
             sort: [{ field: 'created_at', direction: 'desc' }],
-            maxRecords: 2,
+            maxRecords: 5, // Increased from 2 to ensure we get the AI's last message
           })
 
           // Check if the last AI message (most recent outbound) offered verification
@@ -339,6 +341,13 @@ export async function POST(req: NextRequest) {
               lastAiBody.includes('posso ajudar com a verificação') ||
               lastAiBody.includes('posso verificar') ||
               lastAiBody.includes('verificação/autenticação')
+
+            // Log for debugging
+            logInfo('verification-context-detected', 'AI offered verification in previous message', {
+              phone: wa,
+              lastAiMessageBody: lastAiBody.substring(0, 100),
+              currentMessage: body,
+            })
           }
         } catch (error) {
           logError('verification-context-check', error as Error, { phone: wa })
@@ -346,16 +355,29 @@ export async function POST(req: NextRequest) {
       }
 
       // Detect affirmative response to verification offer
+      // Use .trim() to handle whitespace and check if message STARTS with affirmative word
+      const trimmedBody = body.toLowerCase().trim()
       const isAffirmativeResponse =
-        body.toLowerCase() === 'ok' ||
-        body.toLowerCase() === 'sim' ||
-        body.toLowerCase() === 'pode ser' ||
-        body.toLowerCase() === 'vamos lá' ||
-        body.toLowerCase() === 'vamos' ||
-        body.toLowerCase() === 'claro' ||
-        body.toLowerCase() === 'quero' ||
-        body.toLowerCase() === 's' ||
-        body.toLowerCase() === 'yes'
+        trimmedBody === 'ok' ||
+        trimmedBody === 'ok!' ||
+        trimmedBody.startsWith('ok ') ||
+        trimmedBody === 'sim' ||
+        trimmedBody === 'sim!' ||
+        trimmedBody.startsWith('sim ') ||
+        trimmedBody === 'pode ser' ||
+        trimmedBody.startsWith('pode ser') ||
+        trimmedBody === 'vamos lá' ||
+        trimmedBody === 'vamos la' ||
+        trimmedBody === 'vamos' ||
+        trimmedBody.startsWith('vamos ') ||
+        trimmedBody === 'claro' ||
+        trimmedBody.startsWith('claro ') ||
+        trimmedBody === 'quero' ||
+        trimmedBody.startsWith('quero ') ||
+        trimmedBody === 's' ||
+        trimmedBody === 'yes' ||
+        trimmedBody === 'yes!' ||
+        trimmedBody.startsWith('yes ')
 
       // Detect if customer wants to sell a watch OR if active verification session exists
       const wantsSellWatch =
