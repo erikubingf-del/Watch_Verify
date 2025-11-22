@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { atCreate, atSelect, buildFormula } from '@/utils/airtable'
+import { atCreate, atSelect, atUpdate, buildFormula } from '@/utils/airtable'
 import { chat } from '@/utils/openai'
 import { validateTwilioRequest, createTwiMLResponse } from '@/lib/twilio'
 import { logError, logInfo } from '@/lib/logger'
