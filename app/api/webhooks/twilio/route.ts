@@ -986,23 +986,118 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
         ? await analyzeGuaranteeCard(currentSession.guarantee_card_url)
         : null
 
-      // Cross-reference: check date mismatch
-      if (guaranteeAnalysis?.purchase_date && invoiceAnalysis.invoice_date) {
-        const guaranteeDate = new Date(guaranteeAnalysis.purchase_date)
-        const invoiceDate = new Date(invoiceAnalysis.invoice_date)
-        const daysDiff = Math.abs((guaranteeDate.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24))
+      // ===== COMPREHENSIVE CROSS-REFERENCE CHECKS =====
 
-        if (daysDiff > 60) {
-          await updateEnhancedVerificationSession(customerPhone, {
-            invoice_url: invoiceUrl,
-            state: 'awaiting_date_explanation',
-          })
+      const mismatches: string[] = []
 
-          return `A Nota Fiscal é de **${invoiceAnalysis.invoice_date}** mas o certificado de garantia é **${guaranteeAnalysis.purchase_date}**. Qual o motivo dessa diferença?`
+      // 1. Check SERIAL NUMBER consistency across all documents
+      const serials = {
+        photo: photoAnalysis?.serial,
+        guarantee: guaranteeAnalysis?.serial,
+        invoice: invoiceAnalysis.serialNumber,
+      }
+
+      // Compare serials (allow for partial matches - some invoices abbreviate)
+      if (serials.guarantee && serials.invoice) {
+        if (serials.guarantee !== serials.invoice &&
+            !serials.guarantee.includes(serials.invoice) &&
+            !serials.invoice.includes(serials.guarantee)) {
+          mismatches.push(`📌 Serial no certificado: **${serials.guarantee}**\n📌 Serial na Nota Fiscal: **${serials.invoice}**`)
         }
       }
 
-      // Update session
+      if (serials.photo && serials.guarantee) {
+        if (serials.photo !== serials.guarantee &&
+            !serials.photo.includes(serials.guarantee) &&
+            !serials.guarantee.includes(serials.photo)) {
+          mismatches.push(`📌 Serial na foto: **${serials.photo}**\n📌 Serial no certificado: **${serials.guarantee}**`)
+        }
+      }
+
+      // 2. Check REFERENCE NUMBER consistency
+      const references = {
+        photo: photoAnalysis?.reference,
+        guarantee: guaranteeAnalysis?.reference,
+      }
+
+      if (references.photo && references.guarantee) {
+        if (references.photo !== references.guarantee) {
+          mismatches.push(`📌 Referência na foto: **${references.photo}**\n📌 Referência no certificado: **${references.guarantee}**`)
+        }
+      }
+
+      // 3. Check if invoice is missing watch details
+      const invoiceMissingDetails: string[] = []
+
+      if (!invoiceAnalysis.hasSerial && !invoiceAnalysis.serialNumber) {
+        invoiceMissingDetails.push('- Número de série não encontrado na Nota Fiscal')
+      }
+
+      // Check if invoice mentions watch/relógio at all
+      const hasWatchReference = invoiceAnalysis.items.some(item =>
+        item.toLowerCase().includes('relógio') ||
+        item.toLowerCase().includes('relogio') ||
+        item.toLowerCase().includes('watch')
+      )
+
+      if (!hasWatchReference && invoiceAnalysis.items.length > 0) {
+        invoiceMissingDetails.push('- Nota Fiscal não menciona especificamente "relógio"')
+      }
+
+      // 4. Check DATE mismatch (>60 days difference)
+      if (guaranteeAnalysis?.purchaseDate && invoiceAnalysis.date) {
+        const guaranteeDate = new Date(guaranteeAnalysis.purchaseDate)
+        const invoiceDate = new Date(invoiceAnalysis.date)
+        const daysDiff = Math.abs((guaranteeDate.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24))
+
+        if (daysDiff > 60) {
+          mismatches.push(`📅 Data no certificado: **${guaranteeAnalysis.purchaseDate}**\n📅 Data na Nota Fiscal: **${invoiceAnalysis.date}**`)
+        }
+      }
+
+      // ===== HANDLE MISMATCHES =====
+
+      // If there are mismatches, ask for confirmation
+      if (mismatches.length > 0) {
+        await updateEnhancedVerificationSession(customerPhone, {
+          invoice_url: invoiceUrl,
+          state: 'awaiting_date_explanation',  // Reuse this state for mismatch confirmation
+        })
+
+        let response = '⚠️ **Encontrei algumas diferenças entre os documentos:**\n\n'
+        response += mismatches.join('\n\n')
+
+        // Check if this could be 2 different watches
+        const hasMajorMismatch = mismatches.length >= 2
+
+        if (hasMajorMismatch) {
+          response += '\n\n🤔 **Isso pode indicar:**'
+          response += '\n1️⃣ Você está tentando vender **2 relógios diferentes** (envie os documentos de cada um separadamente)'
+          response += '\n2️⃣ Houve um **erro ao enviar** os documentos (documentos misturados)'
+          response += '\n3️⃣ Os documentos estão **corretos mas com informações diferentes** (explique o motivo)'
+          response += '\n\n👉 Responda qual é o caso para continuar.'
+        } else {
+          response += '\n\n**Os documentos estão corretos?** Se sim, responda "sim" para continuar.'
+        }
+
+        return response
+      }
+
+      // If invoice is missing details but no other mismatches, ask for confirmation
+      if (invoiceMissingDetails.length > 0) {
+        await updateEnhancedVerificationSession(customerPhone, {
+          invoice_url: invoiceUrl,
+          state: 'awaiting_date_explanation',
+        })
+
+        let response = '⚠️ **Notei que a Nota Fiscal:**\n\n'
+        response += invoiceMissingDetails.join('\n')
+        response += '\n\n**Essa Nota Fiscal é do relógio que você enviou?** Se sim, responda "sim" para continuar. Vou incluir no relatório que faltavam essas informações na NF.'
+
+        return response
+      }
+
+      // No mismatches - proceed to optional docs
       await updateEnhancedVerificationSession(customerPhone, {
         invoice_url: invoiceUrl,
         state: 'awaiting_optional_docs',
