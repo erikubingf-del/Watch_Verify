@@ -21,6 +21,7 @@ export interface WatchAnalysisResult {
 
 export interface GuaranteeCardAnalysis {
   serial: string | null
+  reference: string | null
   brand: string | null
   model: string | null
   purchaseDate: string | null
@@ -151,15 +152,17 @@ export async function analyzeGuaranteeCard(imageUrl: string): Promise<GuaranteeC
                 type: 'text',
                 text: `You are a document verification expert for luxury watches. Analyze this guarantee/warranty card and extract:
 1. Serial number
-2. Brand
-3. Model
-4. Purchase date
-5. Authorized dealer name
-6. Any signs of tampering or forgery
+2. Reference number (model reference, e.g., 126610LN, 5711/1A)
+3. Brand
+4. Model
+5. Purchase date
+6. Authorized dealer name
+7. Any signs of tampering or forgery
 
 Return ONLY a JSON object:
 {
   "serial": "Serial number or null",
+  "reference": "Reference number or null",
   "brand": "Brand or null",
   "model": "Model or null",
   "purchaseDate": "YYYY-MM-DD or null",
@@ -200,6 +203,7 @@ Return ONLY a JSON object:
     logError('vision', error, { imageUrl })
     return {
       serial: null,
+      reference: null,
       brand: null,
       model: null,
       purchaseDate: null,

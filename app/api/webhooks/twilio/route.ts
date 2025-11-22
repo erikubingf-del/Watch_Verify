@@ -321,12 +321,14 @@ export async function POST(req: NextRequest) {
       const offersWatchPurchaseEnabled = await offersWatchPurchase(validTenantId)
       let enhancedSession = await getEnhancedVerificationSession(wa)
 
-      // Detect if customer wants to sell a watch
+      // Detect if customer wants to sell a watch OR if active verification session exists
       const wantsSellWatch =
         body.toLowerCase().includes('vender') ||
         (body.toLowerCase().includes('comprar') && body.toLowerCase().includes('vocês')) ||
         body.toLowerCase().includes('compram') ||
-        (enhancedSession && enhancedSession.state !== 'completed')
+        (enhancedSession && enhancedSession.state !== 'completed') ||
+        // CRITICAL: If session exists and customer sends media, continue verification flow
+        (enhancedSession && numMedia > 0)
 
       if (enhancedVerificationEnabled && offersWatchPurchaseEnabled && wantsSellWatch) {
         // Handle enhanced verification workflow
@@ -893,13 +895,34 @@ async function handleEnhancedVerification(
       // Analyze with GPT-4 Vision
       const photoAnalysis = await analyzeWatchPhoto(photoUrl)
 
+      // Log analysis for debugging
+      logInfo('watch-photo-analyzed', 'Watch photo analyzed', {
+        brand: photoAnalysis.brand,
+        model: photoAnalysis.model,
+        reference: photoAnalysis.reference,
+        confidence: photoAnalysis.confidence,
+      })
+
       // Update session
       await updateEnhancedVerificationSession(customerPhone, {
         watch_photo_url: photoUrl,
         state: 'awaiting_guarantee',
       })
 
-      return 'Perfeito! Agora envie uma foto do certificado de garantia (guarantee card).'
+      // Build intelligent response based on analysis
+      let response = 'Recebi a foto do seu relógio! '
+
+      if (photoAnalysis.brand || photoAnalysis.model) {
+        response += `Identifico um ${photoAnalysis.brand || 'relógio'}${photoAnalysis.model ? ` ${photoAnalysis.model}` : ''}. `
+      }
+
+      if (photoAnalysis.reference) {
+        response += `Referência: ${photoAnalysis.reference}. `
+      }
+
+      response += '\n\nAgora envie uma foto do certificado de garantia (guarantee card). Preciso verificar o número de série e a data de compra.'
+
+      return response
     }
 
     // State: awaiting_guarantee
@@ -922,11 +945,11 @@ async function handleEnhancedVerification(
 
       // Cross-reference: check if reference numbers match
       if (
-        photoAnalysis?.reference_number &&
-        guaranteeAnalysis.reference_number &&
-        photoAnalysis.reference_number !== guaranteeAnalysis.reference_number
+        photoAnalysis?.reference &&
+        guaranteeAnalysis.reference &&
+        photoAnalysis.reference !== guaranteeAnalysis.reference
       ) {
-        return `⚠️ Notei que o certificado indica referência **${guaranteeAnalysis.reference_number}** mas a foto mostra **${photoAnalysis.reference_number}**. Você tem certeza que enviou os documentos do relógio correto? Se sim, responda "sim" para continuar.`
+        return `⚠️ Notei que o certificado indica referência **${guaranteeAnalysis.reference}** mas a foto mostra **${photoAnalysis.reference}**. Você tem certeza que enviou os documentos do relógio correto? Se sim, responda "sim" para continuar.`
       }
 
       // Update session
