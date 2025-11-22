@@ -880,7 +880,11 @@ async function handleEnhancedVerification(
         state: 'awaiting_watch_photo',
       })
 
-      return 'Ótimo! Vou precisar de algumas fotos e documentos. Primeiro, envie uma foto clara do relógio, mostrando o mostrador e a caixa.'
+      return `Ótimo! Vou precisar de algumas fotos e documentos.
+
+Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
+
+💡 *Dica:* Se conseguir visualizar o número de série (geralmente está na parte de trás da caixa ou próximo ao número 6 no mostrador), tente incluir na foto. Isso ajuda na verificação, mas não é obrigatório!`
     }
 
     // State: awaiting_watch_photo
@@ -920,7 +924,7 @@ async function handleEnhancedVerification(
         response += `Referência: ${photoAnalysis.reference}. `
       }
 
-      response += '\n\nAgora envie uma foto do certificado de garantia (guarantee card). Preciso verificar o número de série e a data de compra.'
+      response += '\n\nAgora envie uma foto do certificado de garantia (guarantee card).\n\n📋 *Importante:* Preciso verificar o número de referência, número de série e data de compra para confirmar autenticidade.'
 
       return response
     }
