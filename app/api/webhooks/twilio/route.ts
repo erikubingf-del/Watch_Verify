@@ -377,6 +377,47 @@ export async function POST(req: NextRequest) {
             0.65
           )
 
+          // Extract customer name if they provided it (and we don't have it yet)
+          if (!ragContext.customerName && body.trim().length > 0) {
+            const extractedName = await extractCustomerName(body, responseMessage)
+            if (extractedName) {
+              // Update customer record with name
+              try {
+                const existingCustomers = await atSelect('Customers', {
+                  filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}')`,
+                })
+
+                if (existingCustomers.length > 0) {
+                  await atUpdate('Customers', existingCustomers[0].id, {
+                    name: extractedName,
+                    last_interaction: new Date().toISOString(),
+                  } as any)
+
+                  logInfo('customer-name-extracted', 'Extracted and saved customer name', {
+                    phone: wa,
+                    name: extractedName,
+                  })
+                } else {
+                  // Create customer if doesn't exist
+                  await atCreate('Customers', {
+                    tenant_id: [validTenantId],
+                    phone: wa,
+                    name: extractedName,
+                    created_at: new Date().toISOString(),
+                    last_interaction: new Date().toISOString(),
+                  } as any)
+
+                  logInfo('customer-created-with-name', 'New customer created with name', {
+                    phone: wa,
+                    name: extractedName,
+                  })
+                }
+              } catch (error: any) {
+                logError('customer-name-extraction', error, { phone: wa })
+              }
+            }
+          }
+
           // Track customer interests from conversation
           if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
             logInfo('whatsapp-rag-recommendation', 'RAG product recommendations sent', {
@@ -1250,4 +1291,72 @@ function getTimePeriod(time: string): string {
   if (hour < 12) return '(manhã)'
   if (hour < 18) return '(tarde)'
   return '(noite)'
+}
+
+/**
+ * Extract customer name from their message using AI
+ * Returns name if detected, null otherwise
+ */
+async function extractCustomerName(customerMessage: string, aiResponse: string): Promise<string | null> {
+  try {
+    // Only attempt extraction if AI response suggests it asked for or acknowledged a name
+    const aiAskedForName =
+      aiResponse.toLowerCase().includes('como posso te chamar') ||
+      aiResponse.toLowerCase().includes('qual seu nome') ||
+      aiResponse.toLowerCase().includes('prazer,') ||
+      aiResponse.toLowerCase().includes('olá')
+
+    if (!aiAskedForName) {
+      return null
+    }
+
+    // Use GPT to extract name from customer's message
+    const { chat } = await import('@/lib/openai')
+    const extraction = await chat(
+      [
+        {
+          role: 'system',
+          content: `You are a name extraction system. Extract the customer's name from their message.
+
+Rules:
+- Return ONLY the name (first name or first + last name)
+- Return null if no name is present
+- Common Brazilian names: João, Maria, José, Ana, Carlos, etc.
+- Ignore greetings, pleasantries, product mentions
+- Format: Proper case (e.g., "João Silva")
+
+Examples:
+Customer: "Meu nome é João Silva" → João Silva
+Customer: "Pode me chamar de Ana" → Ana
+Customer: "Sou o Carlos" → Carlos
+Customer: "João" → João
+Customer: "Olá, tudo bem?" → null
+Customer: "Quero um Rolex" → null`,
+        },
+        {
+          role: 'user',
+          content: customerMessage,
+        },
+      ],
+      0.3 // Low temperature for deterministic extraction
+    )
+
+    const name = extraction.trim()
+
+    // Validate extracted name
+    if (!name || name.toLowerCase() === 'null' || name.length < 2 || name.length > 100) {
+      return null
+    }
+
+    // Don't extract if it looks like a product/brand name
+    const productKeywords = ['rolex', 'patek', 'cartier', 'omega', 'submariner', 'relógio', 'relogio', 'anel', 'colar']
+    if (productKeywords.some(keyword => name.toLowerCase().includes(keyword))) {
+      return null
+    }
+
+    return name
+  } catch (error: any) {
+    logError('name-extraction', error)
+    return null
+  }
 }
