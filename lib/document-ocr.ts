@@ -32,7 +32,8 @@ export interface GuaranteeCardAnalysis {
   reference_number?: string  // Keep for backward compatibility
   serial?: string  // Changed from serial_number for consistency
   serial_number?: string  // Keep for backward compatibility
-  purchase_date?: string
+  purchase_date?: string  // Snake case (primary)
+  purchaseDate?: string  // CamelCase variation (used in code)
   store_name?: string
   store_location?: string
   warranty_duration?: string
