@@ -367,7 +367,7 @@ async function buildConversationContext(
   try {
     // Fetch recent messages
     const messages = await atSelect<MessageRecord>('Messages', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {deleted_at}='')`,
+      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {deleted_at}=BLANK())`,
       maxRecords: maxMessages.toString(),
     })
 
