@@ -1,0 +1,19 @@
+Tenants
+Store Numbers
+Customers
+Messages
+WatchVerify
+Catalog
+Settings
+Users
+VerificationSessions
+Salespeople
+Appointments
+StoreAvailability
+PaymentProviders
+PaymentLinks
+Campaigns
+CampaignSessions
+BookingSessions
+BrandKnowledge
+FeedbackSessions
