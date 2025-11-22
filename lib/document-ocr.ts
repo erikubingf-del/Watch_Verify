@@ -39,11 +39,13 @@ export interface InvoiceAnalysis {
   store_name?: string
   store_cnpj?: string
   store_address?: string
+  country?: string
   product_description?: string
   reference_number?: string
   serial_number?: string
   amount?: number
   currency?: string
+  valid?: boolean
 }
 
 /**
