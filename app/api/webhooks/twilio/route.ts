@@ -59,6 +59,10 @@ import {
   formatConfirmationMessage,
 } from '@/lib/salesperson-feedback'
 
+// Force dynamic rendering and increase timeout for webhook processing
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60 // 60 seconds for webhook processing
+
 /**
  * Upload media to Cloudinary for permanent storage
  */
