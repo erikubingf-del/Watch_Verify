@@ -1299,14 +1299,18 @@ function getTimePeriod(time: string): string {
  */
 async function extractCustomerName(customerMessage: string, aiResponse: string): Promise<string | null> {
   try {
-    // Only attempt extraction if AI response suggests it asked for or acknowledged a name
+    // Only attempt extraction if AI explicitly asked for name (strict check)
     const aiAskedForName =
       aiResponse.toLowerCase().includes('como posso te chamar') ||
       aiResponse.toLowerCase().includes('qual seu nome') ||
-      aiResponse.toLowerCase().includes('prazer,') ||
-      aiResponse.toLowerCase().includes('olá')
+      aiResponse.toLowerCase().includes('qual o seu nome') ||
+      aiResponse.toLowerCase().includes('me diga seu nome') ||
+      aiResponse.toLowerCase().includes('pode me dizer seu nome')
 
-    if (!aiAskedForName) {
+    // Check if AI acknowledged a name being given
+    const aiAcknowledgedName = aiResponse.toLowerCase().includes('prazer,')
+
+    if (!aiAskedForName && !aiAcknowledgedName) {
       return null
     }
 
