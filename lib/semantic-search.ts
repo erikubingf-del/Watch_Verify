@@ -9,6 +9,9 @@ import { generateEmbedding, cosineSimilarity, base64ToEmbedding } from './embedd
 import { atSelect } from '@/utils/airtable'
 import { logInfo, logWarn, PerformanceTimer } from './logger'
 
+// Re-export for dashboard APIs
+export { generateEmbedding } from './embeddings'
+
 export interface SearchOptions {
   tenantId?: string
   category?: string
