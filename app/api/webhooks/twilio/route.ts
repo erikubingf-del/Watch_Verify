@@ -1014,7 +1014,7 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
 
     // Send notification to store owner
     const storeNotification = generateStoreNotification(
-      session.customer_name,
+      session.customer_name || 'Cliente',
       `${photoAnalysis.brand || ''} ${photoAnalysis.model || ''}`,
       crossReference.issues.length === 0 ? 'approved' : 'review',
       verificationId
