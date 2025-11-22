@@ -62,6 +62,7 @@ import {
 // Force dynamic rendering and increase timeout for webhook processing
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // 60 seconds for webhook processing
+// Updated: 2025-11-22 - Fixed Store Numbers table name
 
 /**
  * Upload media to Cloudinary for permanent storage
