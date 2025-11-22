@@ -41,16 +41,21 @@ export interface GuaranteeCardAnalysis {
 export interface InvoiceAnalysis {
   invoice_number?: string
   invoice_date?: string
+  date?: string  // Alias for invoice_date
   store_name?: string
   store_cnpj?: string
   store_address?: string
   country?: string
   product_description?: string
-  reference_number?: string
-  serial_number?: string
+  reference?: string  // Changed from reference_number for consistency
+  reference_number?: string  // Keep for backward compatibility
+  serial?: string  // Changed from serial_number for consistency
+  serial_number?: string  // Keep for backward compatibility
+  serialNumber?: string  // Alternative camelCase (used in code)
   amount?: number
   currency?: string
   valid?: boolean
+  hasSerial?: boolean  // Used in code
 }
 
 /**
