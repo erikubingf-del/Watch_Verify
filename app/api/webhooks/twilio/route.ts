@@ -399,6 +399,7 @@ export async function POST(req: NextRequest) {
           )
         }
       }
+      }
     }
 
     // Step 7: Send message via Twilio Messaging API (instead of TwiML)
