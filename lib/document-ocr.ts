@@ -15,18 +15,23 @@ const VISION_MODEL = 'gpt-4o' // Supports vision
 export interface WatchPhotoAnalysis {
   brand?: string
   model?: string
-  reference_number?: string
-  serial_number?: string
+  reference?: string  // Changed from reference_number for consistency
+  reference_number?: string  // Keep for backward compatibility
+  serial?: string  // Changed from serial_number for consistency
+  serial_number?: string  // Keep for backward compatibility
   condition_notes?: string
   authenticity_markers?: string[]
   visible_damage?: string[]
+  confidence?: number  // Added for logging
 }
 
 export interface GuaranteeCardAnalysis {
   brand?: string
   model?: string
-  reference_number?: string
-  serial_number?: string
+  reference?: string  // Changed from reference_number for consistency
+  reference_number?: string  // Keep for backward compatibility
+  serial?: string  // Changed from serial_number for consistency
+  serial_number?: string  // Keep for backward compatibility
   purchase_date?: string
   store_name?: string
   store_location?: string
