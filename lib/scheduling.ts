@@ -278,14 +278,44 @@ export async function bookAppointment(
       return null
     }
 
-    // Step 2: Assign salesperson
+    // Step 2: Create or update customer record
+    const existingCustomers = await atSelect('Customers', {
+      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}')`,
+    })
+
+    if (existingCustomers.length > 0) {
+      // Update existing customer
+      const customer = existingCustomers[0]
+      const currentInterests = customer.fields.interests || []
+      const updatedInterests = productInterest && !currentInterests.includes(productInterest)
+        ? [...currentInterests, productInterest]
+        : currentInterests
+
+      await atUpdate('Customers', customer.id, {
+        name: customerName,
+        last_interaction: new Date().toISOString(),
+        interests: updatedInterests,
+      } as any)
+    } else {
+      // Create new customer
+      await atCreate('Customers', {
+        tenant_id: [tenantId],
+        phone: customerPhone,
+        name: customerName,
+        interests: productInterest ? [productInterest] : [],
+        created_at: new Date().toISOString(),
+        last_interaction: new Date().toISOString(),
+      } as any)
+    }
+
+    // Step 3: Assign salesperson
     const salesperson = await assignSalesperson(tenantId, date)
     if (!salesperson) {
       logWarn('scheduling', 'No salesperson available', { tenantId, date })
       return null
     }
 
-    // Step 3: Create appointment record
+    // Step 4: Create appointment record
     const appointmentRecord = await atCreate('Appointments', {
       tenant_id: [tenantId],
       customer_phone: customerPhone,
@@ -301,7 +331,7 @@ export async function bookAppointment(
 
     const appointmentId = appointmentRecord.id
 
-    // Step 4: Send confirmation to customer
+    // Step 5: Send confirmation to customer
     const customerMessage = formatCustomerConfirmation({
       customerName,
       salespersonName: salesperson.name,
@@ -312,7 +342,7 @@ export async function bookAppointment(
 
     await sendWhatsAppMessage(customerPhone, customerMessage)
 
-    // Step 5: Notify salesperson
+    // Step 6: Notify salesperson
     const salespersonMessage = formatSalespersonNotification({
       customerName,
       customerPhone,
