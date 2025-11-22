@@ -377,12 +377,61 @@ export async function POST(req: NextRequest) {
             0.65
           )
 
-          // Optionally append product recommendations in structured format
+          // Track customer interests from conversation
           if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
             logInfo('whatsapp-rag-recommendation', 'RAG product recommendations sent', {
               phone: wa,
               productsFound: ragContext.relevantProducts.length,
             })
+
+            // Update or create customer with interests
+            try {
+              const existingCustomers = await atSelect('Customers', {
+                filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}')`,
+              })
+
+              const productTitles = ragContext.relevantProducts.slice(0, 3).map(p => p.title)
+
+              if (existingCustomers.length > 0) {
+                // Update existing customer interests
+                const customer = existingCustomers[0]
+                const currentInterests = customer.fields.interests || []
+                const newInterests = productTitles.filter(title => !currentInterests.includes(title))
+
+                if (newInterests.length > 0) {
+                  const updatedInterests = [...currentInterests, ...newInterests].slice(0, 10) // Limit to 10 interests
+
+                  await atUpdate('Customers', customer.id, {
+                    interests: updatedInterests,
+                    last_interaction: new Date().toISOString(),
+                  } as any)
+
+                  logInfo('customer-interest-tracked', 'Updated customer interests', {
+                    phone: wa,
+                    newInterests: newInterests.length,
+                    totalInterests: updatedInterests.length,
+                  })
+                }
+              } else {
+                // Create new customer with initial interests
+                await atCreate('Customers', {
+                  tenant_id: [validTenantId],
+                  phone: wa,
+                  name: '', // Will be filled later during booking or feedback
+                  interests: productTitles,
+                  created_at: new Date().toISOString(),
+                  last_interaction: new Date().toISOString(),
+                } as any)
+
+                logInfo('customer-created-with-interests', 'New customer created with interests', {
+                  phone: wa,
+                  interests: productTitles.length,
+                })
+              }
+            } catch (error: any) {
+              // Don't fail the whole conversation if interest tracking fails
+              logError('customer-interest-tracking', error, { phone: wa })
+            }
           }
         } catch (error: any) {
           // Fallback to basic conversation if RAG fails
