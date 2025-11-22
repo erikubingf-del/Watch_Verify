@@ -43,9 +43,10 @@ export async function buildRAGContext(
     searchOptions = {},
   } = options
 
-  // Step 1: Get customer information (name + last interaction time)
+  // Step 1: Get customer information (name + last interaction time) + store settings
   let customerName: string | undefined
   let conversationGapHours: number | undefined
+  let verificationEnabled = false
 
   if (customerPhone && tenantId) {
     try {
@@ -68,6 +69,23 @@ export async function buildRAGContext(
       }
     } catch (error: any) {
       logInfo('rag-customer-fetch', 'Failed to fetch customer info', { error: error.message })
+    }
+  }
+
+  // Step 1b: Get store settings (verification enabled)
+  if (tenantId) {
+    try {
+      const settings = await atSelect('Settings', {
+        filterByFormula: `{tenant_id}='${tenantId}'`,
+        maxRecords: '1',
+      })
+
+      if (settings.length > 0) {
+        const settingsFields = settings[0].fields as any
+        verificationEnabled = settingsFields.verification_enabled === true
+      }
+    } catch (error: any) {
+      logInfo('rag-settings-fetch', 'Failed to fetch store settings', { error: error.message })
     }
   }
 
@@ -109,8 +127,10 @@ export async function buildRAGContext(
     )
   }
 
-  // Step 4: Get available brands from catalog
+  // Step 4: Get available brands from catalog + detect if store sells jewelry
   let availableBrands: string[] = []
+  let sellsJewelry = false
+
   if (tenantId) {
     try {
       const allProducts = await atSelect('Catalog', {
@@ -118,9 +138,16 @@ export async function buildRAGContext(
       })
       const brands = allProducts.map((p: any) => p.fields.brand).filter(Boolean)
       availableBrands = [...new Set(brands)] // Unique brands
+
+      // Check if any products are jewelry (rings, necklaces, bracelets, earrings)
+      const jewelryCategories = ['rings', 'necklaces', 'bracelets', 'earrings']
+      sellsJewelry = allProducts.some((p: any) =>
+        jewelryCategories.includes(p.fields.category?.toLowerCase())
+      )
     } catch (error) {
       // If brand field doesn't exist, extract from title
       availableBrands = []
+      sellsJewelry = false
     }
   }
 
@@ -128,14 +155,16 @@ export async function buildRAGContext(
   const productTitles = relevantProducts.map(p => p.title)
   const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
 
-  // Step 6: Build system prompt with catalog context + brand knowledge
+  // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry
   const systemPrompt = buildSystemPrompt(
     relevantProducts,
     conversationContext,
     brandContext,
     availableBrands,
     customerName,
-    conversationGapHours
+    conversationGapHours,
+    verificationEnabled,
+    sellsJewelry
   )
 
   return {
@@ -244,7 +273,7 @@ function shouldPerformSearch(message: string): boolean {
 }
 
 /**
- * Build system prompt with product recommendations + brand knowledge
+ * Build system prompt with product recommendations + brand knowledge + store capabilities
  */
 function buildSystemPrompt(
   products: SearchResult[],
@@ -252,7 +281,9 @@ function buildSystemPrompt(
   brandContext?: string,
   availableBrands?: string[],
   customerName?: string,
-  conversationGapHours?: number
+  conversationGapHours?: number,
+  verificationEnabled?: boolean,
+  sellsJewelry?: boolean
 ): string {
   let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
@@ -329,13 +360,51 @@ LANGUAGE & RESPONSE STYLE:
 - Example of ELEGANT: "Olá! O Submariner é um clássico. Temos o 126610LN (R$ 58.900) disponível. Gostaria de saber mais sobre ele?"
 - Get to the point quickly - customers appreciate efficiency
 
+FIRST CONTACT INTRODUCTION (New Customers Only):
+${!conversationContext || conversationContext.length === 0
+  ? `- When greeting a NEW customer for the first time, introduce the store briefly and elegantly:
+- Example: "Olá! Somos uma boutique especializada em relógios de luxo${sellsJewelry ? ' e joias' : ''}. Trabalhamos com ${availableBrands && availableBrands.length > 0 ? availableBrands.slice(0, 3).join(', ') : 'marcas de prestígio'}${verificationEnabled ? '. Também oferecemos verificação de relógios para quem deseja vender' : ''}. Como posso ajudar?"
+- Keep it SHORT (1-2 sentences) - get to the point quickly
+- Mention: (1) Store type (relógios${sellsJewelry ? ' e joias' : ''}), (2) Top brands, ${verificationEnabled ? '(3) Verification service' : ''}
+- Then ask: "Como posso ajudar?" or "Procura algo específico?"
+`
+  : `- Customer has existing conversation history - DO NOT repeat introduction
+- Continue naturally from where conversation left off
+`}
 SERVICES AVAILABLE:
-- ✅ Product purchase (watches & jewelry)
+- ✅ Product purchase (${sellsJewelry ? 'watches & jewelry' : 'luxury watches'})
 - ✅ Visit scheduling
 - ✅ Product recommendations
-- ✅ Watch authentication/verification (if customer asks to SELL their watch)
-- ❌ Watch BUYING service (we don't buy watches from customers for resale)
-- If customer wants to sell and it's NOT for verification: "Lamento, mas no momento não oferecemos compra de relógios usados. Posso ajudar com verificação/autenticação se você precisar avaliar seu relógio."
+${verificationEnabled
+  ? `- ✅ Watch verification/authentication (IMPORTANT: Read rules below)
+- ❌ Watch BUYING service (we evaluate but don't buy for resale)`
+  : `- ❌ Watch verification (NOT available at this store)
+- ❌ Watch BUYING service (we don't buy watches from customers)`}
+
+${verificationEnabled
+  ? `WATCH VERIFICATION SERVICE (Critical Rules):
+⚠️ VERIFICATION PRICING POLICY:
+- NEVER provide pricing estimates during verification conversation
+- NEVER say "vale aproximadamente R$ X" or similar estimates
+- The AI can AUTHENTICATE (verify if real/fake) but CANNOT price watches
+- Pricing requires human expert evaluation after full verification process
+
+When customer asks to SELL their watch:
+1. Offer verification: "Posso ajudar com a verificação/autenticação do seu relógio. Preciso de algumas fotos para analisar."
+2. If they accept: Start verification flow (photos of watch, guarantee card, invoice)
+3. During verification: Explain authenticity only, NOT value
+4. After verification completes: "Seu relógio foi verificado. Para discutir valores, recomendo uma visita à loja para nosso especialista avaliar pessoalmente. Gostaria de agendar?"
+5. If they insist on price during chat: "Valores só podem ser fornecidos após análise completa do especialista na loja, considerando estado de conservação, acessórios e mercado atual."
+
+Key Messages:
+- ✅ "Posso verificar a autenticidade do seu relógio"
+- ✅ "Nosso especialista precisa analisar pessoalmente para definir valores"
+- ❌ "Seu relógio vale aproximadamente R$ X" (NEVER estimate price)
+- ❌ "Compramos relógios usados" (we verify but don't buy for resale)
+`
+  : `WATCH VERIFICATION (NOT AVAILABLE):
+- If customer asks to verify/sell watch: "No momento não oferecemos serviço de verificação de relógios. Podemos ajudar com a compra de novos modelos. Está interessado em conhecer nosso catálogo?"
+`}
 
 PRODUCT AVAILABILITY RULES:
 - If product has delivery_options = "store_only": NEVER mention stock availability, NEVER say "temos X unidades"
