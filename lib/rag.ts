@@ -47,6 +47,7 @@ export async function buildRAGContext(
   let customerName: string | undefined
   let conversationGapHours: number | undefined
   let verificationEnabled = false
+  let welcomeMessage: string | undefined
 
   if (customerPhone && tenantId) {
     try {
@@ -72,17 +73,27 @@ export async function buildRAGContext(
     }
   }
 
-  // Step 1b: Get store settings (verification enabled)
+  // Step 1b: Get store settings (verification enabled + welcome message)
   if (tenantId) {
     try {
-      const settings = await atSelect('Settings', {
-        filterByFormula: `{tenant_id}='${tenantId}'`,
-        maxRecords: '1',
+      // Settings.tenant_id is a linked record - we need to get ALL settings and filter in code
+      const allSettings = await atSelect('Settings', {})
+
+      // Find settings for this tenant
+      const settings = allSettings.find((s: any) => {
+        const tenantIdArray = s.fields.tenant_id
+        return Array.isArray(tenantIdArray) && tenantIdArray.includes(tenantId)
       })
 
-      if (settings.length > 0) {
-        const settingsFields = settings[0].fields as any
+      if (settings) {
+        const settingsFields = settings.fields as any
         verificationEnabled = settingsFields.verification_enabled === true
+        welcomeMessage = settingsFields.welcome_message || undefined
+
+        logInfo('rag-settings-loaded', 'Store settings loaded', {
+          verificationEnabled,
+          hasWelcomeMessage: !!welcomeMessage,
+        })
       }
     } catch (error: any) {
       logInfo('rag-settings-fetch', 'Failed to fetch store settings', { error: error.message })
@@ -155,7 +166,7 @@ export async function buildRAGContext(
   const productTitles = relevantProducts.map(p => p.title)
   const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
 
-  // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry
+  // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry + welcome
   const systemPrompt = buildSystemPrompt(
     relevantProducts,
     conversationContext,
@@ -164,7 +175,8 @@ export async function buildRAGContext(
     customerName,
     conversationGapHours,
     verificationEnabled,
-    sellsJewelry
+    sellsJewelry,
+    welcomeMessage
   )
 
   return {
@@ -283,7 +295,8 @@ function buildSystemPrompt(
   customerName?: string,
   conversationGapHours?: number,
   verificationEnabled?: boolean,
-  sellsJewelry?: boolean
+  sellsJewelry?: boolean,
+  welcomeMessage?: string
 ): string {
   let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
@@ -362,7 +375,13 @@ LANGUAGE & RESPONSE STYLE:
 
 FIRST CONTACT INTRODUCTION (New Customers Only):
 ${!conversationContext || conversationContext.length === 0
-  ? `- When greeting a NEW customer for the first time, introduce the store briefly and elegantly:
+  ? welcomeMessage
+    ? `- When greeting a NEW customer for the first time, use this EXACT custom welcome message:
+"${welcomeMessage}"
+- Do NOT modify or add to this message
+- After the welcome message, you can ask: "Como posso ajudar?" or "Procura algo específico?"
+`
+    : `- When greeting a NEW customer for the first time, introduce the store briefly and elegantly:
 - Example: "Olá! Somos uma boutique especializada em relógios de luxo${sellsJewelry ? ' e joias' : ''}. Trabalhamos com ${availableBrands && availableBrands.length > 0 ? availableBrands.slice(0, 3).join(', ') : 'marcas de prestígio'}${verificationEnabled ? '. Também oferecemos verificação de relógios para quem deseja vender' : ''}. Como posso ajudar?"
 - Keep it SHORT (1-2 sentences) - get to the point quickly
 - Mention: (1) Store type (relógios${sellsJewelry ? ' e joias' : ''}), (2) Top brands, ${verificationEnabled ? '(3) Verification service' : ''}
