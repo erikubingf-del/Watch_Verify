@@ -85,7 +85,6 @@ export async function buildRAGContext(
     try {
       const allProducts = await atSelect('Catalog', {
         filterByFormula: `AND({tenant_id}='${tenantId}', {active}=TRUE())`,
-        fields: ['brand'],
       })
       const brands = allProducts.map((p: any) => p.fields.brand).filter(Boolean)
       availableBrands = [...new Set(brands)] // Unique brands
