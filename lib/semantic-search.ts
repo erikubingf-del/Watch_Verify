@@ -30,6 +30,7 @@ export interface SearchResult {
   price?: number
   imageUrl?: string
   tags?: string[]
+  delivery_options?: string
   similarity: number
   relevanceScore: number
 }
@@ -153,6 +154,7 @@ export async function searchCatalog(
         price: fields.price,
         imageUrl: fields.image_url,
         tags: fields.tags,
+        delivery_options: fields.delivery_options,
         similarity,
         relevanceScore,
       })
