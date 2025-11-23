@@ -338,7 +338,8 @@ MEMORY & CONTEXT (CRITICAL):
     if (products.length > 0) {
       prompt += `\nRELEVANT PRODUCTS FROM CATALOG:\n`
       products.forEach((p, i) => {
-        prompt += `${i + 1}. ${p.title} - R$ ${p.price.toLocaleString('pt-BR')}\n`
+        const priceStr = p.price ? `R$ ${p.price.toLocaleString('pt-BR')}` : 'Preço sob consulta'
+        prompt += `${i + 1}. ${p.title} - ${priceStr}\n`
         if (p.description) {
           prompt += `   ${p.description.substring(0, 100)}${p.description.length > 100 ? '...' : ''}\n`
         }
