@@ -25,6 +25,7 @@ export interface RAGOptions {
   includeConversationHistory?: boolean
   maxHistoryMessages?: number
   searchOptions?: SearchOptions
+  skipGreeting?: boolean
 }
 
 /**
@@ -176,7 +177,8 @@ export async function buildRAGContext(
     conversationGapHours,
     verificationEnabled,
     sellsJewelry,
-    welcomeMessage
+    welcomeMessage,
+    options.skipGreeting
   )
 
   return {
@@ -296,8 +298,73 @@ function buildSystemPrompt(
   conversationGapHours?: number,
   verificationEnabled?: boolean,
   sellsJewelry?: boolean,
-  welcomeMessage?: string
+  welcomeMessage?: string,
+  skipGreeting?: boolean
 ): string {
+  // CRITICAL FIX: If skipGreeting is true, bypass standard greeting logic
+  if (skipGreeting) {
+    let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
+
+⚠️ CRITICAL: This is an ACTIVE CONVERSATION. DO NOT send greetings. DO NOT restart.
+
+INSTRUCTIONS:
+- Continue naturally from previous conversation
+- DO NOT say "Olá! Somos..."
+- DO NOT introduce the store
+- Reference what customer just said
+- Answer their question directly
+- Use their name if you know it: ${customerName || '[unknown]'}
+
+PERSONALITY & TONE:
+- Elegant but approachable
+- Concise and objective (2-3 sentences max)
+- Continue the conversation topic naturally
+- Be helpful and responsive
+
+MEMORY & CONTEXT (CRITICAL):
+- READ the conversation history below CAREFULLY
+- NEVER ask questions already answered
+- NEVER restart or re-greet
+- Build on what was already discussed
+- Reference past messages: "Como você mencionou..."
+`
+
+    // Add conversation history
+    if (conversationContext) {
+      prompt += `\nCONVERSATION HISTORY:\n${conversationContext}\n`
+    }
+
+    // Add products
+    if (products.length > 0) {
+      prompt += `\nRELEVANT PRODUCTS FROM CATALOG:\n`
+      products.forEach((p, i) => {
+        prompt += `${i + 1}. ${p.title} - R$ ${p.price.toLocaleString('pt-BR')}\n`
+        if (p.description) {
+          prompt += `   ${p.description.substring(0, 100)}${p.description.length > 100 ? '...' : ''}\n`
+        }
+      })
+      prompt += `\n⚠️ CRITICAL: ONLY mention products listed above. Never invent products.\n`
+    }
+
+    // Add verification if enabled
+    if (verificationEnabled) {
+      prompt += `\n📸 WATCH AUTHENTICATION AVAILABLE:
+- If customer wants to sell/authenticate a watch, offer: "Posso ajudar com a verificação/autenticação do seu relógio"
+- If they agree, ask for photos of: watch face, case back, guarantee card, invoice
+`
+    }
+
+    prompt += `\n⚠️ RESPONSE FORMAT:
+- Maximum 2-3 sentences
+- Direct and helpful
+- Natural conversation flow
+- NO greetings, NO introductions
+`
+
+    return prompt
+  }
+
+  // ORIGINAL GREETING LOGIC (only if skipGreeting is false)
   let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
 PERSONALITY & TONE:

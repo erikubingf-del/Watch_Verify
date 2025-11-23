@@ -419,46 +419,52 @@ export async function POST(req: NextRequest) {
       } else {
         // Step 7: Regular conversation with RAG (product recommendations)
         try {
+          // CRITICAL FIX: Import conversation guards
+          const { shouldSendGreeting, getLastAIMessage } = await import('@/lib/conversation-guards')
+
           // Handle media-only messages (photos without text)
           let messageContent = body
           if (numMedia > 0 && (!body || body.trim().length === 0)) {
-            // User sent media without text - create descriptive message for context
-            messageContent = 'Enviei uma foto'
-            logInfo('media-only-message', 'Handling media-only message', {
+            // CRITICAL FIX: Check what customer was doing before sending photo
+            const lastAIMessage = await getLastAIMessage(validTenantId, wa)
+
+            if (lastAIMessage?.includes('enviar fotos') || lastAIMessage?.includes('pode me enviar')) {
+              // Customer is continuing verification flow
+              messageContent = 'Enviei a foto que você pediu'
+            } else {
+              messageContent = 'Enviei uma foto'
+            }
+
+            logInfo('media-only-message', 'Handling media-only message with context', {
               phone: wa,
               numMedia,
               mediaUrl: mediaUrls[0],
+              lastAIMessage: lastAIMessage?.substring(0, 50),
             })
           }
 
-          // Build RAG context with semantic search
-          const ragContext = await buildRAGContext(messageContent, {
+          // CRITICAL FIX: Check if we should skip greeting (active conversation)
+          const skipGreeting = !(await shouldSendGreeting(validTenantId, wa))
+
+          logInfo('greeting-check', 'Greeting decision made', {
+            phone: wa,
+            skipGreeting,
+            messageContent: messageContent.substring(0, 50),
+          })
+
+          // Build RAG context with semantic search (first pass)
+          let ragContext = await buildRAGContext(messageContent, {
             tenantId: validTenantId,
             customerPhone: wa,
             includeConversationHistory: true,
             maxHistoryMessages: 10,
+            skipGreeting, // NEW PARAMETER
           })
 
-          // Generate AI response with catalog context
-          // Include media URL in the user message if present
-          const userMessage = numMedia > 0
-            ? `${messageContent}\n\n[Foto recebida: ${mediaUrls[0]}]`
-            : messageContent
-
-          responseMessage = await chat(
-            [
-              {
-                role: 'system',
-                content: ragContext.systemPrompt,
-              },
-              { role: 'user', content: userMessage },
-            ],
-            0.65
-          )
-
-          // Extract customer name if they provided it (and we don't have it yet)
+          // CRITICAL FIX: Extract customer name BEFORE generating response
           if (!ragContext.customerName && body.trim().length > 0) {
-            const extractedName = await extractCustomerName(body, responseMessage)
+            const lastAIMessage = await getLastAIMessage(validTenantId, wa)
+            const extractedName = await extractCustomerName(body, lastAIMessage || '')
             if (extractedName) {
               // Update customer record with name
               try {
@@ -491,11 +497,43 @@ export async function POST(req: NextRequest) {
                     name: extractedName,
                   })
                 }
+
+                // CRITICAL: Update ragContext with extracted name and rebuild prompt
+                ragContext = await buildRAGContext(messageContent, {
+                  tenantId: validTenantId,
+                  customerPhone: wa,
+                  includeConversationHistory: true,
+                  maxHistoryMessages: 10,
+                  skipGreeting,
+                })
+
+                logInfo('rag-context-rebuilt', 'RAG context rebuilt with customer name', {
+                  phone: wa,
+                  name: extractedName,
+                  hasName: !!ragContext.customerName,
+                })
               } catch (error: any) {
                 logError('customer-name-extraction', error, { phone: wa })
               }
             }
           }
+
+          // Generate AI response with catalog context (NOW with customer name available)
+          // Include media URL in the user message if present
+          const userMessage = numMedia > 0
+            ? `${messageContent}\n\n[Foto recebida: ${mediaUrls[0]}]`
+            : messageContent
+
+          responseMessage = await chat(
+            [
+              {
+                role: 'system',
+                content: ragContext.systemPrompt,
+              },
+              { role: 'user', content: userMessage },
+            ],
+            0.65
+          )
 
           // Track customer interests from conversation
           if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
