@@ -622,7 +622,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 7: Send message via Twilio Messaging API (instead of TwiML)
+    // Step 7a: Extract and save facts from conversation (every 5 messages)
+    try {
+      const { processConversationForFacts } = await import('@/lib/customer-facts')
+
+      // Count recent messages to decide if we should extract facts
+      const recentMessages = await atSelect('Messages', {
+        filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
+        sort: '[{"field":"created_at","direction":"desc"}]',
+        maxRecords: '20',
+      })
+
+      const messageCount = recentMessages.length
+
+      // Extract facts every 5 messages or at end of conversation
+      if (messageCount > 0 && messageCount % 5 === 0) {
+        logInfo('fact-extraction-triggered', `Extracting facts after ${messageCount} messages`, {
+          phone: wa,
+        })
+
+        // Run in background (don't block response)
+        processConversationForFacts(validTenantId, wa, 10).catch(error => {
+          logError('background-fact-extraction', error as Error, { phone: wa })
+        })
+      }
+    } catch (error: any) {
+      logError('fact-extraction-check', error, { phone: wa })
+    }
+
+    // Step 7b: Send message via Twilio Messaging API (instead of TwiML)
     // This bypasses sandbox geographic restrictions
     const { sendWhatsAppMessage } = await import('@/lib/twilio')
     const messageSent = await sendWhatsAppMessage(from, responseMessage, to)

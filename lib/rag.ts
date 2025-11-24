@@ -128,7 +128,27 @@ export async function buildRAGContext(
     }
   }
 
-  // Step 3: Build conversation context (optional)
+  // Step 3: Get long-term facts (vector search)
+  let customerFacts: string[] = []
+
+  if (customerPhone && tenantId) {
+    try {
+      const { searchCustomerFacts } = await import('./customer-facts')
+      const facts = await searchCustomerFacts(tenantId, customerPhone, userMessage, 5)
+      customerFacts = facts.map(f => f.fact)
+
+      if (customerFacts.length > 0) {
+        logInfo('rag-facts-retrieved', `Retrieved ${customerFacts.length} relevant facts`, {
+          phone: customerPhone,
+          facts: customerFacts,
+        })
+      }
+    } catch (error: any) {
+      logInfo('rag-facts-skip', 'Failed to retrieve customer facts', { error: error.message })
+    }
+  }
+
+  // Step 4: Build conversation context (recent messages)
   let conversationContext = ''
 
   if (includeConversationHistory && customerPhone && tenantId) {
@@ -167,7 +187,7 @@ export async function buildRAGContext(
   const productTitles = relevantProducts.map(p => p.title)
   const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
 
-  // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry + welcome
+  // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry + welcome + facts
   const systemPrompt = buildSystemPrompt(
     relevantProducts,
     conversationContext,
@@ -178,7 +198,8 @@ export async function buildRAGContext(
     verificationEnabled,
     sellsJewelry,
     welcomeMessage,
-    options.skipGreeting
+    options.skipGreeting,
+    customerFacts
   )
 
   return {
@@ -299,7 +320,8 @@ function buildSystemPrompt(
   verificationEnabled?: boolean,
   sellsJewelry?: boolean,
   welcomeMessage?: string,
-  skipGreeting?: boolean
+  skipGreeting?: boolean,
+  customerFacts?: string[]
 ): string {
   // CRITICAL FIX: If skipGreeting is true, bypass standard greeting logic
   if (skipGreeting) {
@@ -329,9 +351,18 @@ MEMORY & CONTEXT (CRITICAL):
 - Reference past messages: "Como você mencionou..."
 `
 
+    // Add long-term facts FIRST (most important context)
+    if (customerFacts && customerFacts.length > 0) {
+      prompt += `\n[KNOWN FACTS ABOUT CUSTOMER]\n`
+      customerFacts.forEach(fact => {
+        prompt += `• ${fact}\n`
+      })
+      prompt += `\n⚠️ USE THESE FACTS: Reference customer's preferences naturally in your response\n`
+    }
+
     // Add conversation history
     if (conversationContext) {
-      prompt += `\nCONVERSATION HISTORY:\n${conversationContext}\n`
+      prompt += `\n[RECENT CONVERSATION]\n${conversationContext}\n`
     }
 
     // Add products
