@@ -184,23 +184,40 @@ export async function saveFacts(facts: CustomerFact[]): Promise<void> {
 
   try {
     for (const fact of facts) {
+      // First, get customer_id from Customers table
+      const customers = await atSelect('Customers', {
+        filterByFormula: `AND({tenant_id}='${fact.tenant_id}', {phone}='${fact.customer_phone}')`,
+        maxRecords: '1',
+      })
+
+      if (customers.length === 0) {
+        logError('fact-save-no-customer', new Error('Customer not found'), {
+          phone: fact.customer_phone,
+        })
+        continue
+      }
+
+      const customerId = customers[0].id
+
       // Generate embedding for the fact
       const embedding = await generateEmbedding(fact.fact)
 
-      // Save to Airtable
+      // Save to Airtable with correct field names
       await atCreate('CustomerFacts', {
-        customer_phone: fact.customer_phone,
-        tenant_id: [fact.tenant_id], // Linked record
+        customer_id: [customerId], // Linked record to Customers table
         fact: fact.fact,
         fact_embedding: JSON.stringify(embedding), // Store as JSON string
         category: fact.category,
-        confidence: fact.confidence,
+        confidence: Math.round(fact.confidence * 100), // Convert 0-1 to 0-100 for integer field
         created_at: fact.created_at,
-        source_message: fact.source_message || '',
+        fact_source: fact.source_message || '',
+        source_type: 'message_analysis',
+        is_active: true,
       } as any)
 
       logInfo('fact-saved', 'Fact saved to CustomerFacts', {
         phone: fact.customer_phone,
+        customerId,
         fact: fact.fact.substring(0, 50),
         category: fact.category,
       })
@@ -222,17 +239,33 @@ export async function searchCustomerFacts(
   topK: number = 5
 ): Promise<CustomerFact[]> {
   try {
+    // First, get customer_id from Customers table
+    const customers = await atSelect('Customers', {
+      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}')`,
+      maxRecords: '1',
+    })
+
+    if (customers.length === 0) {
+      logInfo('no-customer-found', 'Customer not found for fact search', {
+        phone: customerPhone,
+      })
+      return []
+    }
+
+    const customerId = customers[0].id
+
     // Generate embedding for query
     const queryEmbedding = await generateEmbedding(query)
 
-    // Fetch all facts for this customer
+    // Fetch all facts for this customer using customer_id
     const records = await atSelect('CustomerFacts', {
-      filterByFormula: `AND({customer_phone}='${customerPhone}', {tenant_id}='${tenantId}')`,
+      filterByFormula: `AND(FIND('${customerId}', ARRAYJOIN({customer_id})), {is_active}=TRUE())`,
     })
 
     if (records.length === 0) {
       logInfo('no-facts-found', 'No facts in database for customer', {
         phone: customerPhone,
+        customerId,
       })
       return []
     }
@@ -249,14 +282,14 @@ export async function searchCustomerFacts(
 
         return {
           id: record.id,
-          customer_phone: fields.customer_phone,
-          tenant_id: tenantId,
+          customer_phone: customerPhone, // Use parameter value
+          tenant_id: tenantId, // Use parameter value
           fact: fields.fact,
           category: fields.category,
-          confidence: fields.confidence,
+          confidence: fields.confidence / 100, // Convert 0-100 back to 0-1
           created_at: fields.created_at,
           last_confirmed: fields.last_confirmed,
-          source_message: fields.source_message,
+          source_message: fields.fact_source || '', // Use correct field name
           similarity,
         }
       })
