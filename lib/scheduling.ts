@@ -234,7 +234,7 @@ export async function assignSalesperson(
     }
 
     // Step 3: Build salesperson list with current load
-    const salespersonList: Salesperson[] = salespeople.map((sp) => {
+    const salespersonList: Salesperson[] = salespeople.map((sp: any) => {
       const currentAppointments = appointmentsPerSalesperson[sp.id] || 0
 
       // Note: workingHours and maxDailyAppointments are not currently in User model
@@ -545,7 +545,7 @@ export async function getSalespersonAppointments(
       }
     })
 
-    return appointments.map((apt) => {
+    return appointments.map((apt: any) => {
       const time = apt.scheduledAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 
       return {

@@ -410,9 +410,9 @@ async function handleSalespersonFeedback(
         }
 
         await updateFeedbackSession(salespersonPhone, {
-          extracted_data: feedbackData,
-          matched_customers: matchedCustomers,
-          customer_name: feedbackData.customer_name,
+          extractedData: feedbackData,
+          matchedCustomers: matchedCustomers,
+          customerName: feedbackData.customer_name,
           state:
             matchedCustomers.length === 1
               ? 'awaiting_confirmation'
@@ -468,7 +468,7 @@ async function handleSalespersonFeedback(
       const selectedCustomer = session.matched_customers[choice - 1]
 
       await updateFeedbackSession(salespersonPhone, {
-        customer_phone: selectedCustomer.fields.phone,
+        customerPhone: selectedCustomer.fields.phone,
         state: 'awaiting_confirmation',
       })
 
@@ -503,7 +503,7 @@ async function handleSalespersonFeedback(
         } as any)
 
         await updateFeedbackSession(salespersonPhone, {
-          customer_phone: formattedPhone,
+          customerPhone: formattedPhone,
           state: 'awaiting_confirmation',
         })
 
@@ -641,7 +641,7 @@ async function handleEnhancedVerification(
     if (session.state === 'awaiting_watch_info') {
       // Store customer's stated model
       await updateEnhancedVerificationSession(customerPhone, {
-        customer_stated_model: message,
+        customerStatedModel: message,
         state: 'awaiting_watch_photo',
       })
 
@@ -674,7 +674,7 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
 
       // Update session
       await updateEnhancedVerificationSession(customerPhone, {
-        watch_photo_url: photoUrl,
+        watchPhotoUrl: photoUrl,
         state: 'awaiting_guarantee',
       })
 
@@ -708,8 +708,8 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
 
       // Refresh session to get latest data
       const currentSession = await getEnhancedVerificationSession(customerPhone)
-      const photoAnalysis = currentSession?.watch_photo_url
-        ? await analyzeWatchPhoto(currentSession.watch_photo_url)
+      const photoAnalysis = currentSession?.watchPhotoUrl
+        ? await analyzeWatchPhoto(currentSession.watchPhotoUrl)
         : null
 
       // Cross-reference: check if reference numbers match
@@ -723,7 +723,7 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
 
       // Update session
       await updateEnhancedVerificationSession(customerPhone, {
-        guarantee_card_url: guaranteeUrl,
+        guaranteeCardUrl: guaranteeUrl,
         state: 'awaiting_invoice',
       })
 
@@ -744,11 +744,11 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
 
       // Refresh session to get all documents
       const currentSession = await getEnhancedVerificationSession(customerPhone)
-      const photoAnalysis = currentSession?.watch_photo_url
-        ? await analyzeWatchPhoto(currentSession.watch_photo_url)
+      const photoAnalysis = currentSession?.watchPhotoUrl
+        ? await analyzeWatchPhoto(currentSession.watchPhotoUrl)
         : null
-      const guaranteeAnalysis = currentSession?.guarantee_card_url
-        ? await analyzeGuaranteeCard(currentSession.guarantee_card_url)
+      const guaranteeAnalysis = currentSession?.guaranteeCardUrl
+        ? await analyzeGuaranteeCard(currentSession.guaranteeCardUrl)
         : null
 
       // ===== COMPREHENSIVE CROSS-REFERENCE CHECKS =====
@@ -825,7 +825,7 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
       // If there are mismatches, ask for confirmation
       if (mismatches.length > 0) {
         await updateEnhancedVerificationSession(customerPhone, {
-          invoice_url: invoiceUrl,
+          invoiceUrl: invoiceUrl,
           state: 'awaiting_date_explanation',  // Reuse this state for mismatch confirmation
         })
 
@@ -851,7 +851,7 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
       // If invoice is missing details but no other mismatches, ask for confirmation
       if (invoiceMissingDetails.length > 0) {
         await updateEnhancedVerificationSession(customerPhone, {
-          invoice_url: invoiceUrl,
+          invoiceUrl: invoiceUrl,
           state: 'awaiting_date_explanation',
         })
 
@@ -864,7 +864,7 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
 
       // No mismatches - proceed to optional docs
       await updateEnhancedVerificationSession(customerPhone, {
-        invoice_url: invoiceUrl,
+        invoiceUrl: invoiceUrl,
         state: 'awaiting_optional_docs',
       })
 
@@ -882,7 +882,7 @@ Prefere enviar agora ou que eu envie o relatório atual para a boutique?`
     if (session.state === 'awaiting_date_explanation') {
       // Store customer's explanation
       await updateEnhancedVerificationSession(customerPhone, {
-        date_mismatch_reason: message,
+        dateMismatchReason: message,
         state: 'awaiting_optional_docs',
       })
 
@@ -909,11 +909,11 @@ Quer enviar documentos adicionais (fatura cartão, comprovante viagem, box) ou p
 
         // Add to additional_documents array
         const currentSession = await getEnhancedVerificationSession(customerPhone)
-        const additionalDocs = currentSession?.additional_documents || []
+        const additionalDocs = currentSession?.additionalDocuments || []
         additionalDocs.push(additionalUrl)
 
         await updateEnhancedVerificationSession(customerPhone, {
-          additional_documents: additionalDocs,
+          additionalDocuments: additionalDocs,
         })
 
         return `✅ Documento adicional recebido! Quer enviar mais documentos ou prefere que eu envie o relatório para a boutique?`
@@ -947,22 +947,22 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
     })
 
     // Analyze all documents
-    const photoAnalysis = session.watch_photo_url
-      ? await analyzeWatchPhoto(session.watch_photo_url)
+    const photoAnalysis = session.watchPhotoUrl
+      ? await analyzeWatchPhoto(session.watchPhotoUrl)
       : ({} as any)
 
-    const guaranteeAnalysis = session.guarantee_card_url
-      ? await analyzeGuaranteeCard(session.guarantee_card_url)
+    const guaranteeAnalysis = session.guaranteeCardUrl
+      ? await analyzeGuaranteeCard(session.guaranteeCardUrl)
       : ({} as any)
 
-    const invoiceAnalysis = session.invoice_url ? await analyzeInvoice(session.invoice_url) : ({} as any)
+    const invoiceAnalysis = session.invoiceUrl ? await analyzeInvoice(session.invoiceUrl) : ({} as any)
 
     // Cross-reference
     const crossReference = crossReferenceDocuments(
       photoAnalysis,
       guaranteeAnalysis,
       invoiceAnalysis,
-      session.customer_stated_model || ''
+      session.customerStatedModel || ''
     )
 
     // Calculate ICD score
@@ -999,28 +999,28 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
 
     await atCreate('WatchVerify', {
       tenant_id: [tenantId],
-      customer: session.customer_name,
+      customer: session.customerName,
       phone: customerPhone,
       cpf: session.cpf,
       brand: photoAnalysis.brand || guaranteeAnalysis.brand || '',
-      model: photoAnalysis.model || guaranteeAnalysis.model || session.customer_stated_model || '',
+      model: photoAnalysis.model || guaranteeAnalysis.model || session.customerStatedModel || '',
       reference: photoAnalysis.reference_number || guaranteeAnalysis.reference_number || '',
       serial: photoAnalysis.serial_number || guaranteeAnalysis.serial_number || '',
       icd: legalRisk.icd, // NEW: Store ICD score
       status: legalRisk.color === 'red' ? 'rejected' : legalRisk.color === 'green' ? 'approved' : 'manual_review',
-      photo_url: session.watch_photo_url,
-      guarantee_url: session.guarantee_card_url,
-      invoice_url: session.invoice_url,
+      photo_url: session.watchPhotoUrl,
+      guarantee_url: session.guaranteeCardUrl,
+      invoice_url: session.invoiceUrl,
       issues: JSON.stringify(legalRisk.criticalIssues), // Store as JSON
       recommendations: JSON.stringify(legalRisk.warnings), // Store as JSON
       notes: report,
-      created_at: session.created_at,
+      created_at: session.createdAt,
       completed_at: new Date().toISOString(),
     } as any)
 
     // Send notification to store owner
     const storeNotification = generateStoreNotification(
-      session.customer_name || 'Cliente',
+      session.customerName || 'Cliente',
       `${photoAnalysis.brand || ''} ${photoAnalysis.model || ''}`,
       crossReference.issues.length === 0 ? 'approved' : 'review',
       verificationId

@@ -193,7 +193,7 @@ export async function findCustomersByName(
     // Map to expected format (Airtable-like structure for compatibility with existing logic if needed, 
     // but better to return clean objects. The service expects .fields property though)
     // We'll map to a structure compatible with the service logic
-    const mappedCustomers = customers.map(c => ({
+    const mappedCustomers = customers.map((c: any) => ({
       id: c.id,
       fields: {
         name: c.name,
@@ -206,7 +206,7 @@ export async function findCustomersByName(
 
     if (city) {
       const cityMatches = mappedCustomers.filter(
-        c => c.fields.city && c.fields.city.toLowerCase() === city.toLowerCase()
+        (c: any) => c.fields.city && c.fields.city.toLowerCase() === city.toLowerCase()
       )
       if (cityMatches.length > 0) return cityMatches
     }

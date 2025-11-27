@@ -8,7 +8,7 @@
 import { prisma } from '@/lib/prisma'
 import { generateEmbedding } from '@/lib/embeddings'
 import { logInfo, logError } from '@/lib/logger'
-import crypto from 'crypto'
+import { randomUUID } from 'crypto'
 
 export interface Memory {
     id: string
@@ -35,7 +35,7 @@ export async function addMemory(
         // Store in database
         // Note: Prisma doesn't support vector writes directly in create/update yet for Unsupported types
         // We have to use raw query to insert
-        const id = crypto.randomUUID()
+        const id = randomUUID()
         const embeddingString = `[${embedding.join(',')}]`
 
         await prisma.$executeRaw`
