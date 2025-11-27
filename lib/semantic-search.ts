@@ -135,7 +135,7 @@ export async function searchCatalog(
       LIMIT ${limit};
     `
 
-    const resultsRaw = await prisma.$queryRawUnsafe<any[]>(querySql, ...params)
+    const resultsRaw = (await prisma.$queryRawUnsafe(querySql, ...params)) as any[]
 
     // Map results
     const results: SearchResult[] = resultsRaw.map((row: any) => {
@@ -182,14 +182,7 @@ export async function findSimilarItems(
   tenantId?: string,
   limit: number = 5
 ): Promise<SearchResult[]> {
-  // Fetch source item embedding
-  const sourceItem = await prisma.product.findUnique({
-    where: { id: itemId },
-    select: { embedding: true, category: true } // We can't select embedding easily with Prisma types if it's unsupported
-    // Actually we might need to fetch it raw if Prisma doesn't map Unsupported types to string/array
-  })
-
-  // Workaround: Use raw query to get embedding of source item
+  // Use raw query to get embedding of source item (Prisma doesn't support vector type in select)
   const sourceRaw = await prisma.$queryRaw`
     SELECT embedding::text, category FROM products WHERE id = ${itemId}
   ` as any[]
@@ -217,9 +210,9 @@ export async function findSimilarItems(
   // Note: This is vulnerable to SQL injection if tenantId is not sanitized, but we use it internally.
   // Better to use parameterized query.
 
-  const resultsRaw = await prisma.$queryRawUnsafe<any[]>(
+  const resultsRaw = (await prisma.$queryRawUnsafe(
     `
-    SELECT 
+    SELECT
       id, title, description, category, price, tags, metadata,
       1 - (embedding <=> $1::vector) as similarity
     FROM products
@@ -234,7 +227,7 @@ export async function findSimilarItems(
     ...(tenantId ? [tenantId] : []),
     sourceRaw[0].category,
     limit
-  ) as any[]
+  )) as any[]
 
   return resultsRaw.map((row: any) => ({
     id: row.id,
