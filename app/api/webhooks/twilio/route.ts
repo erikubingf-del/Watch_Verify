@@ -34,7 +34,8 @@ import {
 } from '@/lib/verification-report'
 import { calculateLegalRisk, formatLegalRiskForAirtable } from '@/lib/legal-risk'
 import { calcICD } from '@/utils/icdCalculator'
-import { buildRAGContext, formatProductsForWhatsApp } from '@/lib/rag'
+// Note: @/lib/rag, @/lib/scheduling, @/lib/salesperson-feedback use Prisma
+// and are imported dynamically at runtime to avoid build-time failures
 import {
   getBookingSession,
   createBookingSession,
@@ -44,21 +45,19 @@ import {
   parseTimeFromMessage,
   getBookingPrompt,
 } from '@/lib/booking-sessions'
-import { getAvailableSlots, bookAppointment } from '@/lib/scheduling'
-import {
-  getFeedbackSession,
-  createFeedbackSession,
-  updateFeedbackSession,
-  transcribeAudio,
-  extractFeedbackData,
-  findCustomersByName,
-  findCustomerByPhone,
-  updateCustomerWithFeedback,
-  createVisitRecord,
-  generateFollowUpMessage,
-  formatDisambiguationOptions,
-  formatConfirmationMessage,
-} from '@/lib/salesperson-feedback'
+
+// Dynamic import helpers for Prisma-dependent modules
+async function getRagModule() {
+  return import('@/lib/rag')
+}
+
+async function getSchedulingModule() {
+  return import('@/lib/scheduling')
+}
+
+async function getSalespersonFeedbackModule() {
+  return import('@/lib/salesperson-feedback')
+}
 
 // Force dynamic rendering and increase timeout for webhook processing
 export const dynamic = 'force-dynamic'
@@ -345,6 +344,22 @@ async function handleSalespersonFeedback(
   storeNumber: string
 ): Promise<string> {
   try {
+    // Dynamic import of feedback module
+    const feedbackModule = await getSalespersonFeedbackModule()
+    const {
+      createFeedbackSession,
+      updateFeedbackSession,
+      transcribeAudio,
+      extractFeedbackData,
+      findCustomersByName,
+      findCustomerByPhone,
+      updateCustomerWithFeedback,
+      createVisitRecord,
+      generateFollowUpMessage,
+      formatDisambiguationOptions,
+      formatConfirmationMessage,
+    } = feedbackModule
+
     // Start new session if none exists
     if (!session) {
       // Remove /feedback prefix if present
@@ -1057,6 +1072,10 @@ async function handleBookingConversation(
   customerPhone: string
 ): Promise<string> {
   try {
+    // Dynamic import of scheduling module
+    const schedulingModule = await getSchedulingModule()
+    const { getAvailableSlots, bookAppointment } = schedulingModule
+
     // Start new booking if no session exists
     if (!session) {
       session = await createBookingSession(tenantId, customerPhone, 'Cliente')
