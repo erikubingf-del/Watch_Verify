@@ -14,6 +14,8 @@ export interface VerificationSession extends BaseSession {
   | 'awaiting_invoice'
   | 'processing'
   | 'completed'
+  customerPhone: string
+  customerName: string
   watchPhotoUrl?: string
   guaranteeCardUrl?: string
   invoiceUrl?: string
