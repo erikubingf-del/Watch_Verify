@@ -67,3 +67,5 @@ scripts/fix-verification-states.py
 scripts/update-airtable-schema.py
 scripts/audit-airtable-schema.ts
 PRE_LAUNCH_TESTING_PROTOCOL.md
+
+/generated/prisma

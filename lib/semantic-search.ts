@@ -1,16 +1,18 @@
 /**
- * Semantic Search Engine
+ * Semantic Search Engine (PostgreSQL + pgvector)
  *
- * Finds relevant catalog items using vector similarity search.
- * Combines semantic matching with optional filters (category, price range, tenant).
+ * Finds relevant catalog items using vector similarity search directly in the database.
+ * Replaces the legacy in-memory Airtable implementation.
  */
 
-import { generateEmbedding, cosineSimilarity, base64ToEmbedding } from './embeddings'
-import { atSelect } from '@/utils/airtable'
-import { logInfo, logWarn, PerformanceTimer } from './logger'
+import { generateEmbedding } from './embeddings'
+import { PrismaClient } from '@prisma/client'
+import { logInfo, PerformanceTimer } from './logger'
 
 // Re-export for dashboard APIs
 export { generateEmbedding } from './embeddings'
+
+const prisma = new PrismaClient()
 
 export interface SearchOptions {
   tenantId?: string
@@ -38,12 +40,12 @@ export interface SearchResult {
 export interface SearchResponse {
   results: SearchResult[]
   queryEmbedding: number[]
-  totalSearched: number
+  totalSearched: number // Approximate in Postgres
   durationMs: number
 }
 
 /**
- * Search catalog using semantic similarity
+ * Search catalog using semantic similarity via pgvector
  */
 export async function searchCatalog(
   query: string,
@@ -58,177 +60,118 @@ export async function searchCatalog(
     minPrice,
     maxPrice,
     limit = 5,
-    similarityThreshold = 0.7,
+    similarityThreshold = 0.7, // Note: pgvector distance is 0..2 (0=identical). Similarity = 1 - (distance/2) roughly? No, usually 1 - distance for cosine.
+    // pgvector cosine distance (<=>) returns 1 - cosine_similarity.
+    // So distance 0.3 means similarity 0.7.
+    // We want similarity > threshold, so distance < (1 - threshold).
     includeInactive = false,
   } = options
 
   // Step 1: Generate embedding for search query
-  logInfo('semantic-search', 'Starting semantic search', { query, options })
+  logInfo('semantic-search', 'Starting semantic search (Postgres)', { query, options })
   const { embedding: queryEmbedding } = await generateEmbedding(query)
 
-  // Step 2: Build Airtable filter
-  const filters: string[] = []
+  // Step 2: Execute raw SQL query with pgvector
+  // We use raw query because Prisma doesn't fully support vector operations in the typed API yet
 
-  if (tenantId) {
-    filters.push(`{tenant_id}='${tenantId}'`)
-  }
+  const distanceThreshold = 1 - similarityThreshold
+  const vectorString = `[${queryEmbedding.join(',')}]`
 
-  if (category) {
-    filters.push(`{category}='${category}'`)
-  }
+  try {
+    // Build dynamic filters
+    const conditions: string[] = []
+    const params: any[] = []
 
-  if (minPrice !== undefined) {
-    filters.push(`{price}>=${minPrice}`)
-  }
+    // 1. Vector similarity (always applied)
+    // We select it in the field list, but we can also filter by it
 
-  if (maxPrice !== undefined) {
-    filters.push(`{price}<=${maxPrice}`)
-  }
+    if (tenantId) {
+      conditions.push(`"tenantId" = $${params.length + 1}`)
+      params.push(tenantId)
+    }
 
-  if (!includeInactive) {
-    filters.push(`{active}=TRUE()`)
-  }
+    if (category) {
+      conditions.push(`category = $${params.length + 1}`)
+      params.push(category)
+    }
 
-  // Must have embedding to be searchable
-  filters.push(`{embedding}!=''`)
+    if (minPrice !== undefined) {
+      conditions.push(`price >= $${params.length + 1}`)
+      params.push(minPrice)
+    }
 
-  const filterFormula = filters.length > 0 ? `AND(${filters.join(',')})` : ''
+    if (maxPrice !== undefined) {
+      conditions.push(`price <= $${params.length + 1}`)
+      params.push(maxPrice)
+    }
 
-  // Step 3: Fetch all matching catalog items
-  const records = await atSelect<CatalogRecord>('Catalog', {
-    ...(filterFormula && { filterByFormula: filterFormula }),
-  })
+    if (!includeInactive) {
+      conditions.push(`"isActive" = true`)
+    }
 
-  logInfo('semantic-search-fetch', 'Fetched catalog records', {
-    recordsFetched: records.length,
-    filterApplied: !!filterFormula,
-  })
+    // Add embedding check
+    conditions.push(`embedding IS NOT NULL`)
 
-  if (records.length === 0) {
+    // Add distance threshold check
+    // embedding <=> vector < threshold
+    conditions.push(`(embedding <=> $${params.length + 1}::vector) < ${distanceThreshold}`)
+    params.push(vectorString)
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const querySql = `
+      SELECT 
+        id, 
+        title, 
+        description, 
+        category, 
+        price, 
+        tags, 
+        metadata, 
+        1 - (embedding <=> $${params.length}::vector) as similarity
+      FROM products
+      ${whereClause}
+      ORDER BY embedding <=> $${params.length}::vector ASC
+      LIMIT ${limit};
+    `
+
+    const resultsRaw = await prisma.$queryRawUnsafe<any[]>(querySql, ...params)
+
+    // Map results
+    const results: SearchResult[] = resultsRaw.map((row: any) => {
+      const metadata = row.metadata || {}
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        price: Number(row.price),
+        imageUrl: metadata.image_url,
+        tags: row.tags,
+        delivery_options: metadata.delivery_options,
+        similarity: row.similarity,
+        relevanceScore: row.similarity * 100, // Simple mapping for now
+      }
+    })
+
+    const durationMs = timer.elapsed()
+
+    logInfo('semantic-search-complete', 'Semantic search completed (Postgres)', {
+      resultsFound: results.length,
+      durationMs,
+    })
+
     return {
-      results: [],
+      results,
       queryEmbedding,
-      totalSearched: 0,
-      durationMs: timer.elapsed(),
+      totalSearched: -1, // Not easily available in filtered vector search
+      durationMs,
     }
+
+  } catch (error: any) {
+    logInfo('semantic-search-error', 'Postgres search failed', { error: error.message })
+    throw error
   }
-
-  // Step 4: Calculate similarity scores
-  const scoredResults: Array<SearchResult & { similarity: number }> = []
-
-  for (const record of records) {
-    try {
-      const fields = record.fields as any
-
-      // Skip records without embeddings
-      if (!fields.embedding) {
-        logWarn('semantic-search', `Record ${record.id} missing embedding`, {
-          title: fields.title,
-        })
-        continue
-      }
-
-      // Restore embedding from base64
-      const itemEmbedding = base64ToEmbedding(fields.embedding)
-
-      // Calculate cosine similarity
-      const similarity = cosineSimilarity(queryEmbedding, itemEmbedding)
-
-      // Skip if below threshold
-      if (similarity < similarityThreshold) {
-        continue
-      }
-
-      // Calculate relevance score (combines similarity with other factors)
-      const relevanceScore = calculateRelevanceScore(
-        similarity,
-        fields,
-        query
-      )
-
-      scoredResults.push({
-        id: record.id,
-        title: fields.title,
-        description: fields.description,
-        category: fields.category,
-        price: fields.price,
-        imageUrl: fields.image_url,
-        tags: fields.tags,
-        delivery_options: fields.delivery_options,
-        similarity,
-        relevanceScore,
-      })
-    } catch (error: any) {
-      logWarn('semantic-search-scoring', `Error scoring record ${record.id}`, {
-        error: error.message,
-      })
-    }
-  }
-
-  // Step 5: Sort by relevance score and limit results
-  const results = scoredResults
-    .sort((a, b) => b.relevanceScore - a.relevanceScore)
-    .slice(0, limit)
-
-  const durationMs = timer.elapsed()
-
-  logInfo('semantic-search-complete', 'Semantic search completed', {
-    resultsFound: results.length,
-    totalSearched: records.length,
-    durationMs,
-    avgSimilarity:
-      results.length > 0
-        ? (results.reduce((sum, r) => sum + r.similarity, 0) / results.length).toFixed(3)
-        : 0,
-  })
-
-  return {
-    results,
-    queryEmbedding,
-    totalSearched: records.length,
-    durationMs,
-  }
-}
-
-/**
- * Calculate relevance score combining multiple signals
- */
-function calculateRelevanceScore(
-  similarity: number,
-  item: CatalogFields,
-  query: string
-): number {
-  let score = similarity * 100 // Base score from semantic similarity (0-100)
-
-  // Boost if query contains exact title words
-  const queryWords = query.toLowerCase().split(/\s+/)
-  const titleWords = item.title.toLowerCase().split(/\s+/)
-
-  const exactMatches = queryWords.filter((word) =>
-    titleWords.some((titleWord) => titleWord.includes(word) || word.includes(titleWord))
-  ).length
-
-  if (exactMatches > 0) {
-    score += exactMatches * 5 // +5 per exact word match
-  }
-
-  // Boost if category mentioned in query
-  if (item.category && query.toLowerCase().includes(item.category.toLowerCase())) {
-    score += 10
-  }
-
-  // Boost if tags match query
-  if (item.tags) {
-    const tagMatches = item.tags.filter((tag) =>
-      query.toLowerCase().includes(tag.toLowerCase())
-    ).length
-
-    if (tagMatches > 0) {
-      score += tagMatches * 3 // +3 per tag match
-    }
-  }
-
-  return score
 }
 
 /**
@@ -239,139 +182,69 @@ export async function findSimilarItems(
   tenantId?: string,
   limit: number = 5
 ): Promise<SearchResult[]> {
-  const timer = new PerformanceTimer()
-  timer.start()
-
-  // Fetch the source item
-  const sourceRecords = await atSelect<CatalogRecord>('Catalog', {
-    filterByFormula: `RECORD_ID()='${itemId}'`,
+  // Fetch source item embedding
+  const sourceItem = await prisma.product.findUnique({
+    where: { id: itemId },
+    select: { embedding: true, category: true } // We can't select embedding easily with Prisma types if it's unsupported
+    // Actually we might need to fetch it raw if Prisma doesn't map Unsupported types to string/array
   })
 
-  if (sourceRecords.length === 0) {
-    throw new Error(`Catalog item ${itemId} not found`)
+  // Workaround: Use raw query to get embedding of source item
+  const sourceRaw = await prisma.$queryRaw`
+    SELECT embedding::text, category FROM products WHERE id = ${itemId}
+  ` as any[]
+
+  if (!sourceRaw || sourceRaw.length === 0) {
+    throw new Error(`Item ${itemId} not found`)
   }
 
-  const sourceItem = sourceRecords[0]
-  const sourceFields = sourceItem.fields as any
+  const sourceEmbeddingStr = sourceRaw[0].embedding
+  // sourceEmbeddingStr is "[0.1, 0.2, ...]" string
 
-  if (!sourceFields.embedding) {
-    throw new Error(`Item ${itemId} has no embedding`)
-  }
+  // Now search using this vector
+  const querySql = `
+    SELECT 
+      id, title, description, category, price, tags, metadata,
+      1 - (embedding <=> ${sourceEmbeddingStr}::vector) as similarity
+    FROM products
+    WHERE id != ${itemId}
+    AND "tenantId" = ${tenantId ? `'${tenantId}'` : '"tenantId"'}
+    AND category = '${sourceRaw[0].category}'
+    ORDER BY embedding <=> ${sourceEmbeddingStr}::vector ASC
+    LIMIT ${limit};
+  `
 
-  const sourceEmbedding = base64ToEmbedding(sourceFields.embedding)
+  // Note: This is vulnerable to SQL injection if tenantId is not sanitized, but we use it internally.
+  // Better to use parameterized query.
 
-  // Search for similar items (excluding the source item)
-  const filters: string[] = [`RECORD_ID()!='${itemId}'`, `{embedding}!=''`]
+  const resultsRaw = await prisma.$queryRawUnsafe<any[]>(
+    `
+    SELECT 
+      id, title, description, category, price, tags, metadata,
+      1 - (embedding <=> $1::vector) as similarity
+    FROM products
+    WHERE id != $2
+    ${tenantId ? 'AND "tenantId" = $3' : ''}
+    AND category = $4
+    ORDER BY embedding <=> $1::vector ASC
+    LIMIT $5;
+    `,
+    sourceEmbeddingStr,
+    itemId,
+    ...(tenantId ? [tenantId] : []),
+    sourceRaw[0].category,
+    limit
+  ) as any[]
 
-  if (tenantId) {
-    filters.push(`{tenant_id}='${tenantId}'`)
-  }
-
-  // Prefer same category
-  if (sourceFields.category) {
-    filters.push(`{category}='${sourceFields.category}'`)
-  }
-
-  const filterFormula = `AND(${filters.join(',')})`
-
-  const records = await atSelect<CatalogRecord>('Catalog', {
-    filterByFormula: filterFormula,
-  })
-
-  // Calculate similarities
-  const scoredResults: SearchResult[] = []
-
-  for (const record of records) {
-    const fields = record.fields as any
-    if (!fields.embedding) continue
-
-    const itemEmbedding = base64ToEmbedding(fields.embedding)
-    const similarity = cosineSimilarity(sourceEmbedding, itemEmbedding)
-
-    scoredResults.push({
-      id: record.id,
-      title: fields.title,
-      description: fields.description,
-      category: fields.category,
-      price: fields.price,
-      imageUrl: fields.image_url,
-      tags: fields.tags,
-      similarity,
-      relevanceScore: similarity * 100,
-    })
-  }
-
-  // Sort by similarity and limit
-  const results = scoredResults
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, limit)
-
-  logInfo('find-similar', 'Found similar items', {
-    sourceItem: sourceFields.title,
-    resultsFound: results.length,
-    durationMs: timer.elapsed(),
-  })
-
-  return results
-}
-
-/**
- * Get trending or popular items (fallback when semantic search doesn't apply)
- */
-export async function getTrendingItems(
-  tenantId?: string,
-  category?: string,
-  limit: number = 5
-): Promise<SearchResult[]> {
-  const filters: string[] = [`{active}=TRUE()`]
-
-  if (tenantId) {
-    filters.push(`{tenant_id}='${tenantId}'`)
-  }
-
-  if (category) {
-    filters.push(`{category}='${category}'`)
-  }
-
-  const filterFormula = filters.length > 0 ? `AND(${filters.join(',')})` : ''
-
-  const records = await atSelect<CatalogRecord>('Catalog', {
-    ...(filterFormula && { filterByFormula: filterFormula }),
-    sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
-    maxRecords: limit.toString(),
-  })
-
-  return records.map((record) => {
-    const fields = record.fields as any
-    return {
-      id: record.id,
-      title: fields.title,
-      description: fields.description,
-      category: fields.category,
-      price: fields.price,
-      imageUrl: fields.image_url,
-      tags: fields.tags,
-      similarity: 0,
-      relevanceScore: 0,
-    }
-  })
-}
-
-// Type definitions
-interface CatalogFields {
-  tenant_id: string
-  title: string
-  description: string
-  category: string
-  price?: number
-  image_url?: string
-  tags?: string[]
-  embedding?: string // base64 encoded
-  active: boolean
-  created_at?: string
-}
-
-type CatalogRecord = {
-  id: string
-  fields: CatalogFields
+  return resultsRaw.map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    price: Number(row.price),
+    imageUrl: row.metadata?.image_url,
+    tags: row.tags,
+    similarity: row.similarity,
+    relevanceScore: row.similarity * 100,
+  }))
 }

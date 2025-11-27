@@ -4,9 +4,13 @@
  * Allows salespeople to enrich customer data after visits via audio or text.
  */
 
-import { atSelect, atCreate, atUpdate, buildFormula } from '@/utils/airtable'
 import { chat } from '@/utils/openai'
 import { logInfo, logError } from './logger'
+import { prisma } from '@/lib/prisma'
+import { SessionManager } from './session-manager'
+
+// Initialize session manager for feedback
+const sessionManager = new SessionManager<FeedbackSession>('feedback_session')
 
 export interface FeedbackData {
   customer_name: string
@@ -25,25 +29,26 @@ export interface FeedbackData {
 
 export interface FeedbackSession {
   id: string
-  tenant_id: string
-  salesperson_phone: string
-  customer_phone?: string
-  customer_name?: string
-  feedback_type: 'audio' | 'text'
-  raw_input: string // URL for audio, text for text
+  tenantId: string
+  salespersonPhone: string
+  customerPhone?: string
+  customerName?: string
+  feedbackType: 'audio' | 'text'
+  rawInput: string // URL for audio, text for text
   transcription?: string
-  extracted_data?: FeedbackData
-  matched_customers?: any[]
+  extractedData?: FeedbackData
+  matchedCustomers?: any[]
   state:
-    | 'awaiting_transcription'
-    | 'awaiting_extraction'
-    | 'awaiting_disambiguation'
-    | 'awaiting_confirmation'
-    | 'awaiting_new_customer_confirm'
-    | 'awaiting_follow_up'
-    | 'completed'
-    | 'cancelled'
-  created_at: string
+  | 'awaiting_transcription'
+  | 'awaiting_extraction'
+  | 'awaiting_disambiguation'
+  | 'awaiting_confirmation'
+  | 'awaiting_new_customer_confirm'
+  | 'awaiting_follow_up'
+  | 'completed'
+  | 'cancelled'
+  createdAt: string
+  updatedAt: string
 }
 
 /**
@@ -173,92 +178,40 @@ export async function findCustomersByName(
   city?: string
 ): Promise<any[]> {
   try {
-    const escapedName = customerName.replace(/'/g, "\\'")
-    const firstName = customerName.split(' ')[0].replace(/'/g, "\\'")
-
-    // Priority 1: Exact name + city match (highest confidence)
-    if (city) {
-      const escapedCity = city.replace(/'/g, "\\'")
-      const exactMatchWithCity = await atSelect('Customers', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', LOWER({name})=LOWER('${escapedName}'), LOWER({city})=LOWER('${escapedCity}'))`,
-      })
-
-      if (exactMatchWithCity.length > 0) {
-        logInfo('customer-search', 'Exact match with city found', {
-          searchName: customerName,
-          city,
-          matches: exactMatchWithCity.length,
-        })
-        return exactMatchWithCity
-      }
-    }
-
-    // Priority 2: Exact name match (any city)
-    const exactMatches = await atSelect('Customers', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', LOWER({name})=LOWER('${escapedName}'))`,
+    // Prisma search
+    const customers = await prisma.customer.findMany({
+      where: {
+        tenantId,
+        name: {
+          contains: customerName,
+          mode: 'insensitive'
+        }
+      },
+      take: 5
     })
 
-    if (exactMatches.length === 1) {
-      // Single exact match - return it
-      logInfo('customer-search', 'Single exact name match found', {
-        searchName: customerName,
-        matches: 1,
-      })
-      return exactMatches
-    }
+    // Map to expected format (Airtable-like structure for compatibility with existing logic if needed, 
+    // but better to return clean objects. The service expects .fields property though)
+    // We'll map to a structure compatible with the service logic
+    const mappedCustomers = customers.map(c => ({
+      id: c.id,
+      fields: {
+        name: c.name,
+        phone: c.phone,
+        city: (c.profile as any)?.city,
+        last_visit: c.lastInteraction ? c.lastInteraction.toISOString().split('T')[0] : null,
+        last_interest: (c.profile as any)?.interests?.[0]
+      }
+    }))
 
-    if (exactMatches.length > 1 && city) {
-      // Multiple exact matches, filter by city
-      const cityMatches = exactMatches.filter(
-        (c) => c.fields.city && c.fields.city.toLowerCase() === city.toLowerCase()
+    if (city) {
+      const cityMatches = mappedCustomers.filter(
+        c => c.fields.city && c.fields.city.toLowerCase() === city.toLowerCase()
       )
-      if (cityMatches.length > 0) {
-        logInfo('customer-search', 'Filtered exact matches by city', {
-          searchName: customerName,
-          city,
-          totalMatches: exactMatches.length,
-          cityMatches: cityMatches.length,
-        })
-        return cityMatches
-      }
+      if (cityMatches.length > 0) return cityMatches
     }
 
-    if (exactMatches.length > 0) {
-      // Return all exact matches for disambiguation
-      return exactMatches
-    }
-
-    // Priority 3: Partial name + city match
-    if (city) {
-      const escapedCity = city.replace(/'/g, "\\'")
-      const partialMatchWithCity = await atSelect('Customers', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', SEARCH(LOWER('${firstName}'), LOWER({name})) > 0, LOWER({city})=LOWER('${escapedCity}'))`,
-        maxRecords: '5',
-      })
-
-      if (partialMatchWithCity.length > 0) {
-        logInfo('customer-search', 'Partial match with city found', {
-          searchName: customerName,
-          city,
-          matches: partialMatchWithCity.length,
-        })
-        return partialMatchWithCity
-      }
-    }
-
-    // Priority 4: Partial name match (any city)
-    const partialMatches = await atSelect('Customers', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', SEARCH(LOWER('${firstName}'), LOWER({name})) > 0)`,
-      maxRecords: '5', // Limit to 5 matches
-    })
-
-    logInfo('customer-search', 'Customer search results', {
-      searchName: customerName,
-      city: city || 'not provided',
-      partialMatches: partialMatches.length,
-    })
-
-    return partialMatches
+    return mappedCustomers
   } catch (error: any) {
     logError('customer-search', error, { customerName, city })
     return []
@@ -270,12 +223,27 @@ export async function findCustomersByName(
  */
 export async function findCustomerByPhone(tenantId: string, phone: string): Promise<any | null> {
   try {
-    const customers = await atSelect('Customers', {
-      filterByFormula: buildFormula('tenant_id', '=', tenantId) + `, {phone}='${phone}'`,
-      maxRecords: '1',
+    const customer = await prisma.customer.findUnique({
+      where: {
+        tenantId_phone: {
+          tenantId,
+          phone
+        }
+      }
     })
 
-    return customers.length > 0 ? customers[0] : null
+    if (!customer) return null
+
+    return {
+      id: customer.id,
+      fields: {
+        name: customer.name,
+        phone: customer.phone,
+        city: (customer.profile as any)?.city,
+        last_visit: customer.lastInteraction ? customer.lastInteraction.toISOString().split('T')[0] : null,
+        last_interest: (customer.profile as any)?.interests?.[0]
+      }
+    }
   } catch (error: any) {
     logError('customer-phone-search', error, { phone })
     return null
@@ -283,46 +251,14 @@ export async function findCustomerByPhone(tenantId: string, phone: string): Prom
 }
 
 /**
- * Get or create feedback session
+ * Get or create feedback session (Redis)
  */
 export async function getFeedbackSession(salespersonPhone: string): Promise<FeedbackSession | null> {
-  try {
-    const sessions = await atSelect<any>('FeedbackSessions', {
-      filterByFormula: `AND({salesperson_phone}='${salespersonPhone}', {state}!='completed', {state}!='cancelled')`,
-      maxRecords: '1',
-    })
-
-    if (sessions.length === 0) {
-      return null
-    }
-
-    const record = sessions[0]
-    return {
-      id: record.id,
-      tenant_id: record.fields.tenant_id,
-      salesperson_phone: record.fields.salesperson_phone,
-      customer_phone: record.fields.customer_phone,
-      customer_name: record.fields.customer_name,
-      feedback_type: record.fields.feedback_type,
-      raw_input: record.fields.raw_input,
-      transcription: record.fields.transcription,
-      extracted_data: record.fields.extracted_data
-        ? JSON.parse(record.fields.extracted_data)
-        : undefined,
-      matched_customers: record.fields.matched_customers
-        ? JSON.parse(record.fields.matched_customers)
-        : undefined,
-      state: record.fields.state,
-      created_at: record.fields.created_at,
-    }
-  } catch (error: any) {
-    logError('feedback-session-get', error, { salespersonPhone })
-    return null
-  }
+  return await sessionManager.get(salespersonPhone)
 }
 
 /**
- * Create new feedback session
+ * Create new feedback session (Redis)
  */
 export async function createFeedbackSession(
   tenantId: string,
@@ -330,75 +266,35 @@ export async function createFeedbackSession(
   feedbackType: 'audio' | 'text',
   rawInput: string
 ): Promise<FeedbackSession> {
-  try {
-    const record = await atCreate('FeedbackSessions', {
-      tenant_id: [tenantId],
-      salesperson_phone: salespersonPhone,
-      feedback_type: feedbackType,
-      raw_input: rawInput,
-      state: feedbackType === 'audio' ? 'awaiting_transcription' : 'awaiting_extraction',
-      created_at: new Date().toISOString(),
-    } as any)
-
-    logInfo('feedback-session-create', 'Feedback session created', {
-      sessionId: record.id,
-      type: feedbackType,
-    })
-
-    return {
-      id: record.id,
-      tenant_id: tenantId,
-      salesperson_phone: salespersonPhone,
-      feedback_type: feedbackType,
-      raw_input: rawInput,
-      state: feedbackType === 'audio' ? 'awaiting_transcription' : 'awaiting_extraction',
-      created_at: new Date().toISOString(),
-    }
-  } catch (error: any) {
-    logError('feedback-session-create', error)
-    throw error
+  const session: FeedbackSession = {
+    id: crypto.randomUUID(),
+    tenantId,
+    salespersonPhone,
+    feedbackType,
+    rawInput,
+    state: feedbackType === 'audio' ? 'awaiting_transcription' : 'awaiting_extraction',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   }
+
+  await sessionManager.create(salespersonPhone, session)
+  return session
 }
 
 /**
- * Update feedback session
+ * Update feedback session (Redis)
  */
 export async function updateFeedbackSession(
   salespersonPhone: string,
   updates: Partial<FeedbackSession>
 ): Promise<FeedbackSession | null> {
-  try {
-    // Get current session
-    const currentSession = await getFeedbackSession(salespersonPhone)
-    if (!currentSession) {
-      return null
-    }
+  const currentSession = await sessionManager.get(salespersonPhone)
+  if (!currentSession) return null
 
-    // Build update object
-    const updateData: any = {}
+  const updatedSession = { ...currentSession, ...updates }
+  await sessionManager.create(salespersonPhone, updatedSession) // Overwrite with updates
 
-    if (updates.transcription) updateData.transcription = updates.transcription
-    if (updates.extracted_data)
-      updateData.extracted_data = JSON.stringify(updates.extracted_data)
-    if (updates.matched_customers)
-      updateData.matched_customers = JSON.stringify(updates.matched_customers)
-    if (updates.customer_phone) updateData.customer_phone = updates.customer_phone
-    if (updates.customer_name) updateData.customer_name = updates.customer_name
-    if (updates.state) updateData.state = updates.state
-
-    await atUpdate('FeedbackSessions', currentSession.id, updateData)
-
-    logInfo('feedback-session-update', 'Session updated', {
-      sessionId: currentSession.id,
-      newState: updates.state,
-    })
-
-    // Return updated session
-    return await getFeedbackSession(salespersonPhone)
-  } catch (error: any) {
-    logError('feedback-session-update', error, { salespersonPhone })
-    return null
-  }
+  return updatedSession
 }
 
 /**
@@ -409,58 +305,57 @@ export async function updateCustomerWithFeedback(
   feedbackData: FeedbackData
 ): Promise<void> {
   try {
-    const updateData: any = {}
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } })
+    if (!customer) throw new Error('Customer not found')
 
+    const profile = (customer.profile as any) || {}
+
+    // Update profile fields
+    if (feedbackData.city) profile.city = feedbackData.city
+    if (feedbackData.birthday) profile.birthday = feedbackData.birthday
+    if (feedbackData.budget_min) profile.budget_min = feedbackData.budget_min
+    if (feedbackData.budget_max) profile.budget_max = feedbackData.budget_max
+    if (feedbackData.hobbies) profile.hobbies = feedbackData.hobbies
     if (feedbackData.product_interest) {
-      updateData.last_interest = feedbackData.product_interest
+      profile.interests = [...(profile.interests || []), feedbackData.product_interest]
     }
 
-    if (feedbackData.budget_min !== undefined) {
-      updateData.budget_min = feedbackData.budget_min
-    }
-
-    if (feedbackData.budget_max !== undefined) {
-      updateData.budget_max = feedbackData.budget_max
-    }
-
-    if (feedbackData.birthday) {
-      updateData.birthday = feedbackData.birthday
-    }
-
-    if (feedbackData.city) {
-      updateData.city = feedbackData.city
-    }
-
-    if (feedbackData.hobbies && feedbackData.hobbies.length > 0) {
-      updateData.hobbies = feedbackData.hobbies.join(', ')
-    }
-
+    // Update notes
+    let notes = (customer.profile as any)?.notes || ''
     if (feedbackData.visit_notes || feedbackData.salesperson_notes) {
-      // Get existing notes
-      const customer = await atSelect('Customers', {
-        filterByFormula: `RECORD_ID()='${customerId}'`,
-        maxRecords: '1',
-      })
-
-      const existingNotes = customer[0]?.fields?.notes || ''
-      const newNotes = [feedbackData.visit_notes, feedbackData.salesperson_notes]
-        .filter(Boolean)
-        .join(' | ')
-
-      updateData.notes = existingNotes
-        ? `${existingNotes}\n[${new Date().toISOString().split('T')[0]}] ${newNotes}`
-        : `[${new Date().toISOString().split('T')[0]}] ${newNotes}`
+      const newNotes = [feedbackData.visit_notes, feedbackData.salesperson_notes].filter(Boolean).join(' | ')
+      notes = notes ? `${notes}\n[${new Date().toISOString().split('T')[0]}] ${newNotes}` : `[${new Date().toISOString().split('T')[0]}] ${newNotes}`
+      profile.notes = notes
     }
 
-    updateData.last_visit = feedbackData.visited_at || new Date().toISOString().split('T')[0]
-    updateData.updated_at = new Date().toISOString()
-
-    await atUpdate('Customers', customerId, updateData)
-
-    logInfo('customer-update-feedback', 'Customer updated with feedback', {
-      customerId,
-      fieldsUpdated: Object.keys(updateData),
+    await prisma.customer.update({
+      where: { id: customerId },
+      data: {
+        profile,
+        lastInteraction: new Date()
+      }
     })
+
+    // Also add to CustomerMemory if we have interesting facts
+    if (feedbackData.product_interest || feedbackData.budget_min || feedbackData.hobbies) {
+      const facts = []
+      if (feedbackData.product_interest) facts.push(`Interested in ${feedbackData.product_interest}`)
+      if (feedbackData.budget_min) facts.push(`Budget range: ${feedbackData.budget_min} - ${feedbackData.budget_max || 'up'}`)
+      if (feedbackData.hobbies) facts.push(`Hobbies: ${feedbackData.hobbies.join(', ')}`)
+
+      for (const fact of facts) {
+        await prisma.customerMemory.create({
+          data: {
+            customerId,
+            fact,
+            source: 'feedback',
+            confidence: 0.9
+          }
+        })
+      }
+    }
+
+    logInfo('customer-update-feedback', 'Customer updated with feedback', { customerId })
   } catch (error: any) {
     logError('customer-update-feedback', error, { customerId })
     throw error
@@ -477,17 +372,26 @@ export async function createVisitRecord(
   feedbackData: FeedbackData
 ): Promise<void> {
   try {
-    await atCreate('Appointments', {
-      tenant_id: [tenantId],
-      customer_phone: customerPhone,
-      customer_name: customerName,
-      date: feedbackData.visited_at || new Date().toISOString().split('T')[0],
-      time: 'N/A (walk-in)',
-      product_interest: feedbackData.product_interest || null,
-      status: 'completed',
-      notes: feedbackData.visit_notes || null,
-      created_at: new Date().toISOString(),
-    } as any)
+    // Find customer first to link
+    const customer = await prisma.customer.findUnique({
+      where: { tenantId_phone: { tenantId, phone: customerPhone } }
+    })
+
+    await prisma.appointment.create({
+      data: {
+        tenantId,
+        customerId: customer?.id, // Link if exists
+        salespersonId: 'system', // TODO: Link to actual salesperson user if available
+        date: new Date(feedbackData.visited_at || new Date()),
+        time: 'N/A (walk-in)',
+        status: 'completed',
+        notes: feedbackData.visit_notes || undefined,
+        metadata: {
+          product_interest: feedbackData.product_interest,
+          source: 'walk-in'
+        }
+      }
+    })
 
     logInfo('visit-record-create', 'Visit record created', {
       customerPhone,

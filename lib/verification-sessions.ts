@@ -1,42 +1,35 @@
-import { atCreate, atUpdate, atSelect, buildFormula } from '@/utils/airtable'
-import { logInfo, logError } from './logger'
-
 /**
- * Verification session state machine
- * Stores multi-step workflow state in Airtable instead of memory
+ * Verification Session Management (Redis)
+ *
+ * Stores multi-step workflow state in Redis instead of Airtable.
  */
 
-export interface VerificationSession {
-  id: string
-  tenantId: string
-  customerPhone: string
-  customerName: string
+import { SessionManager, BaseSession } from './session-manager'
+import { logInfo, logError } from './logger'
+
+export interface VerificationSession extends BaseSession {
   state:
-    | 'awaiting_watch_photo'
-    | 'awaiting_guarantee'
-    | 'awaiting_invoice'
-    | 'processing'
-    | 'completed'
+  | 'awaiting_watch_photo'
+  | 'awaiting_guarantee'
+  | 'awaiting_invoice'
+  | 'processing'
+  | 'completed'
   watchPhotoUrl?: string
   guaranteeCardUrl?: string
   invoiceUrl?: string
-  createdAt: string
-  updatedAt: string
 }
 
-// Session expiration time (1 hour)
-const SESSION_TTL_MS = 60 * 60 * 1000
+const sessionManager = new SessionManager<VerificationSession>('verification', 60 * 60) // 1 hour TTL
 
 /**
- * Create new verification session in Airtable
+ * Create new verification session
  */
 export async function createVerificationSession(
   tenantId: string,
   customerPhone: string,
   customerName: string
 ): Promise<VerificationSession> {
-  const now = new Date()
-  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS)
+  const now = new Date().toISOString()
 
   const session: VerificationSession = {
     id: crypto.randomUUID(),
@@ -44,86 +37,20 @@ export async function createVerificationSession(
     customerPhone,
     customerName,
     state: 'awaiting_watch_photo',
-    createdAt: now.toISOString(),
-    updatedAt: now.toISOString(),
+    createdAt: now,
+    updatedAt: now,
   }
 
-  try {
-    // Delete any existing session for this phone first
-    await clearVerificationSession(customerPhone)
-
-    // Create new session in Airtable
-    await atCreate('VerificationSessions', {
-      session_id: session.id,
-      tenant_id: tenantId,
-      customer_phone: customerPhone,
-      customer_name: customerName,
-      state: session.state,
-      watch_photo_url: null,
-      guarantee_card_url: null,
-      invoice_url: null,
-      created_at: session.createdAt,
-      updated_at: session.updatedAt,
-      expires_at: expiresAt.toISOString(),
-    })
-
-    logInfo('verification-session', `Created session for ${customerPhone}`)
-    return session
-  } catch (error: any) {
-    logError('verification-session', error, { action: 'create', phone: customerPhone })
-    throw error
-  }
+  await sessionManager.create(customerPhone, session)
+  logInfo('verification-session', `Created session for ${customerPhone} (Redis)`)
+  return session
 }
 
 /**
- * Get existing session from Airtable
+ * Get existing session
  */
 export async function getVerificationSession(customerPhone: string): Promise<VerificationSession | null> {
-  try {
-    const records = await atSelect('VerificationSessions', {
-      filterByFormula: buildFormula('customer_phone', '=', customerPhone),
-      maxRecords: '1',
-    })
-
-    if (records.length === 0) {
-      return null
-    }
-
-    const record = records[0]
-    const fields = record.fields as any
-
-    // Check if session is expired
-    const expiresAt = new Date(fields.expires_at)
-    if (expiresAt < new Date()) {
-      logInfo('verification-session', `Session expired for ${customerPhone}`)
-      await clearVerificationSession(customerPhone)
-      return null
-    }
-
-    // Check if session is already completed
-    if (fields.state === 'completed') {
-      return null
-    }
-
-    // Map Airtable fields to VerificationSession
-    const session: VerificationSession = {
-      id: fields.session_id,
-      tenantId: fields.tenant_id,
-      customerPhone: fields.customer_phone,
-      customerName: fields.customer_name,
-      state: fields.state,
-      watchPhotoUrl: fields.watch_photo_url || undefined,
-      guaranteeCardUrl: fields.guarantee_card_url || undefined,
-      invoiceUrl: fields.invoice_url || undefined,
-      createdAt: fields.created_at,
-      updatedAt: fields.updated_at,
-    }
-
-    return session
-  } catch (error: any) {
-    logError('verification-session', error, { action: 'get', phone: customerPhone })
-    return null
-  }
+  return await sessionManager.get(customerPhone)
 }
 
 /**
@@ -134,93 +61,48 @@ export async function updateVerificationSession(
   documentType: 'watch' | 'guarantee' | 'invoice',
   documentUrl: string
 ): Promise<VerificationSession | null> {
-  try {
-    // Get current session
-    const session = await getVerificationSession(customerPhone)
-    if (!session) return null
+  const session = await getVerificationSession(customerPhone)
+  if (!session) return null
 
-    // Find the Airtable record
-    const records = await atSelect('VerificationSessions', {
-      filterByFormula: buildFormula('customer_phone', '=', customerPhone),
-      maxRecords: '1',
-    })
+  let newState = session.state
+  const updates: Partial<VerificationSession> = {}
 
-    if (records.length === 0) return null
-
-    const recordId = records[0].id
-
-    // Determine new state and field to update
-    let newState = session.state
-    const fieldsToUpdate: any = {
-      updated_at: new Date().toISOString(),
-    }
-
-    if (documentType === 'watch') {
-      fieldsToUpdate.watch_photo_url = documentUrl
-      newState = 'awaiting_guarantee'
-      session.watchPhotoUrl = documentUrl
-    } else if (documentType === 'guarantee') {
-      fieldsToUpdate.guarantee_card_url = documentUrl
-      newState = 'awaiting_invoice'
-      session.guaranteeCardUrl = documentUrl
-    } else if (documentType === 'invoice') {
-      fieldsToUpdate.invoice_url = documentUrl
-      newState = 'processing'
-      session.invoiceUrl = documentUrl
-    }
-
-    fieldsToUpdate.state = newState
-    session.state = newState
-    session.updatedAt = fieldsToUpdate.updated_at
-
-    // Update in Airtable
-    await atUpdate('VerificationSessions', recordId, fieldsToUpdate)
-
-    logInfo('verification-session', `Updated session for ${customerPhone}`, {
-      state: newState,
-    })
-
-    return session
-  } catch (error: any) {
-    logError('verification-session', error, { action: 'update', phone: customerPhone })
-    return null
+  if (documentType === 'watch') {
+    updates.watchPhotoUrl = documentUrl
+    newState = 'awaiting_guarantee'
+  } else if (documentType === 'guarantee') {
+    updates.guaranteeCardUrl = documentUrl
+    newState = 'awaiting_invoice'
+  } else if (documentType === 'invoice') {
+    updates.invoiceUrl = documentUrl
+    newState = 'processing'
   }
+
+  updates.state = newState
+
+  const updatedSession = await sessionManager.update(customerPhone, updates)
+  logInfo('verification-session', `Updated session for ${customerPhone} (Redis)`, { state: newState })
+
+  return updatedSession
 }
 
 /**
- * Check if session is complete and ready for verification
+ * Check if session is complete
  */
 export function isSessionComplete(session: VerificationSession): boolean {
   return !!(session.watchPhotoUrl && session.guaranteeCardUrl && session.invoiceUrl)
 }
 
 /**
- * Clear session after completion
+ * Clear session
  */
 export async function clearVerificationSession(customerPhone: string): Promise<void> {
-  try {
-    const records = await atSelect('VerificationSessions', {
-      filterByFormula: buildFormula('customer_phone', '=', customerPhone),
-    })
-
-    if (records.length === 0) return
-
-    // Mark all sessions as completed
-    for (const record of records) {
-      await atUpdate('VerificationSessions', record.id, {
-        state: 'completed',
-        updated_at: new Date().toISOString(),
-      })
-    }
-
-    logInfo('verification-session', `Cleared session for ${customerPhone}`)
-  } catch (error: any) {
-    logError('verification-session', error, { action: 'clear', phone: customerPhone })
-  }
+  await sessionManager.clear(customerPhone)
+  logInfo('verification-session', `Cleared session for ${customerPhone} (Redis)`)
 }
 
 /**
- * Get next prompt for user based on session state
+ * Get next prompt
  */
 export function getNextPrompt(session: VerificationSession): string {
   switch (session.state) {

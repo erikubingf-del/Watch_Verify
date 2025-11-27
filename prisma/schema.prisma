@@ -1,0 +1,327 @@
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+// ---------------------------------------------------------
+// Multi-Tenancy Core
+// ---------------------------------------------------------
+
+model Tenant {
+  id              String   @id @default(uuid())
+  name            String
+  slug            String   @unique // For URL/API routing
+  
+  // Configuration
+  config          Json     @default("{}") // Branding, colors, settings
+  whatsappNumber  String?  @unique
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  users           User[]
+  customers       Customer[]
+  products        Product[]
+  conversations   Conversation[]
+  campaigns       Campaign[]
+  watchVerifications WatchVerify[]
+  availability    StoreAvailability[]
+  
+  @@map("tenants")
+}
+
+// ---------------------------------------------------------
+// Identity & Access
+// ---------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  SALESPERSON
+}
+
+model User {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  email           String
+  passwordHash    String
+  name            String
+  role            UserRole
+  phone           String?  // Personal phone
+  whatsapp        String?  // Work WhatsApp
+  
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  appointments    Appointment[]
+  feedbackLogs    FeedbackLog[]
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+// ---------------------------------------------------------
+// CRM Core
+// ---------------------------------------------------------
+
+model Customer {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  phone           String   // Normalized E.164
+  name            String?
+  email           String?
+  
+  // Rich Profile
+  profile         Json     @default("{}") // Interests, budget, style, sizes
+  tags            String[]
+  
+  // Metrics
+  totalSpent      Decimal  @default(0)
+  lastInteraction DateTime @default(now())
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  conversations   Conversation[]
+  appointments    Appointment[]
+  orders          Order[]
+  memories        CustomerMemory[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, tags])
+  @@map("customers")
+}
+
+model CustomerMemory {
+  id          String   @id @default(uuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  
+  fact        String   @db.Text // "Likes diving watches", "Budget around 50k"
+  embedding   Unsupported("vector(1536)")?
+  source      String?  // "conversation", "feedback", "manual"
+  confidence  Float    @default(1.0)
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("customer_memories")
+}
+
+// ---------------------------------------------------------
+// Communication Layer
+// ---------------------------------------------------------
+
+enum ConversationStatus {
+  ACTIVE
+  WAITING_HUMAN
+  CLOSED
+}
+
+model Conversation {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  
+  status          ConversationStatus @default(ACTIVE)
+  summary         String?  // AI generated summary
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  messages        Message[]
+
+  @@map("conversations")
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id])
+  
+  direction       MessageDirection
+  content         String   @db.Text
+  mediaUrl        String?
+  
+  // AI Metadata
+  tokens          Int?
+  intent          String?
+  
+  createdAt       DateTime @default(now())
+
+  @@map("messages")
+}
+
+// ---------------------------------------------------------
+// Catalog & RAG
+// ---------------------------------------------------------
+
+model Product {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  title           String
+  description     String   @db.Text
+  category        String
+  brand           String?
+  price           Decimal?
+  
+  // Vector Search
+  embedding       Unsupported("vector(1536)")?
+  
+  // Metadata
+  metadata        Json     @default("{}") // Specs, material, movement
+  tags            String[]
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, category])
+  @@map("products")
+}
+
+// ---------------------------------------------------------
+// Operations
+// ---------------------------------------------------------
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model Appointment {
+  id              String   @id @default(uuid())
+  tenantId        String
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  salespersonId   String
+  salesperson     User     @relation(fields: [salespersonId], references: [id])
+  
+  scheduledAt     DateTime
+  status          AppointmentStatus @default(PENDING)
+  notes           String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("appointments")
+}
+
+model FeedbackLog {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  
+  content         String   @db.Text // Transcribed text
+  audioUrl        String?
+  extractedData   Json?    // Structured data extracted by AI
+  
+  createdAt       DateTime @default(now())
+
+  @@map("feedback_logs")
+}
+
+model Order {
+  id              String   @id @default(uuid())
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  
+  totalAmount     Decimal
+  status          String
+  
+  createdAt       DateTime @default(now())
+
+  @@map("orders")
+}
+
+model Campaign {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  name            String
+  targetFilter    Json     // Criteria for segmenting customers
+  messageTemplate String
+  
+  sentCount       Int      @default(0)
+  status          String   // DRAFT, SCHEDULED, COMPLETED
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("campaigns")
+}
+
+model WatchVerify {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  customerName    String
+  customerPhone   String
+  cpf             String?
+  
+  brand           String?
+  model           String?
+  reference       String?
+  serial          String?
+  
+  icd             Float?
+  status          String   // rejected, approved, manual_review
+  
+  photoUrl        String?
+  guaranteeUrl    String?
+  invoiceUrl      String?
+  
+  issues          Json?    // Array of issues
+  recommendations Json?    // Array of recommendations
+  notes           String?  // Full report
+  
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  @@map("watch_verifications")
+}
+
+model StoreAvailability {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  
+  dayOfWeek       Int      // 0-6
+  timeSlot        String   // "14:00"
+  maxBookings     Int      @default(5)
+  isActive        Boolean  @default(true)
+  
+  @@map("store_availability")
+}

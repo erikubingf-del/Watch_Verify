@@ -282,9 +282,10 @@ export async function POST(req: NextRequest) {
     // TypeScript doesn't infer this, so we assert it
     const validTenantId: string = tenantId!
 
-    // Step 4: Log message
-    await atCreate('Messages', {
-      tenant_id: [validTenantId], // Linked record field requires array
+    // Step 4: Log message (Synchronous write to ensure we have it)
+    // In future, this could also be async, but for now we want to ensure it's saved
+    const messageRecord = await atCreate('Messages', {
+      tenant_id: [validTenantId],
       phone: wa,
       body,
       direction: 'inbound',
@@ -292,393 +293,31 @@ export async function POST(req: NextRequest) {
       created_at: new Date().toISOString(),
     } as any)
 
-    let responseMessage = ''
+    // Step 5: Push to Queue for Async Processing
+    const { getWhatsAppQueue } = await import('@/lib/queue')
+    const queue = getWhatsAppQueue()
 
-    // Step 5: Check if this is a salesperson giving feedback
-    const isFromSalesperson = await isSalesperson(validTenantId, wa)
-    let feedbackSession = await getFeedbackSession(wa)
+    await queue.add('process-message', {
+      from: wa,
+      to: toNumber,
+      body,
+      mediaUrls,
+      tenantId: validTenantId,
+      messageId: messageRecord.id,
+    }, {
+      jobId: `msg-${messageRecord.id}`, // Deduplication
+    })
 
-    // Detect feedback intent
-    const isFeedback =
-      body.toLowerCase().startsWith('/feedback') ||
-      (isFromSalesperson &&
-        (numMedia > 0 || feedbackSession || body.toLowerCase().includes('atendi')))
+    logInfo('twilio-webhook-queued', 'Message pushed to queue', {
+      phone: wa,
+      messageId: messageRecord.id,
+    })
 
-    if (isFromSalesperson && isFeedback) {
-      // Handle salesperson feedback workflow
-      responseMessage = await handleSalespersonFeedback(
-        feedbackSession,
-        body,
-        numMedia,
-        mediaUrls,
-        validTenantId,
-        wa,
-        toNumber
-      )
-    } else {
-      // Step 6: Check for enhanced verification flow
-      const enhancedVerificationEnabled = await isEnhancedVerificationEnabled(validTenantId)
-      const offersWatchPurchaseEnabled = await offersWatchPurchase(validTenantId)
-      let enhancedSession = await getEnhancedVerificationSession(wa)
-
-      // Check if AI just offered verification in the last message (to detect affirmative responses)
-      let aiOfferedVerification = false
-      if (!enhancedSession) {
-        try {
-          // CRITICAL FIX: Fetch more messages to account for the one we just logged
-          // Current message is already in DB, so we need at least 3 messages to find the last AI response
-          const recentMessages = await atSelect('Messages', {
-            filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
-            sort: '[{"field":"created_at","direction":"desc"}]',
-            maxRecords: '5', // Increased from 2 to ensure we get the AI's last message
-          })
-
-          // Check if the last AI message (most recent outbound) offered verification
-          const lastAiMessage = recentMessages.find((m: any) => m.fields.direction === 'outbound')
-          if (lastAiMessage) {
-            const lastAiBody = (lastAiMessage.fields.body || '').toLowerCase()
-            aiOfferedVerification =
-              lastAiBody.includes('posso ajudar com a verificação') ||
-              lastAiBody.includes('posso verificar') ||
-              lastAiBody.includes('verificação/autenticação')
-
-            // Log for debugging
-            logInfo('verification-context-detected', 'AI offered verification in previous message', {
-              phone: wa,
-              lastAiMessageBody: lastAiBody.substring(0, 100),
-              currentMessage: body,
-            })
-          }
-        } catch (error) {
-          logError('verification-context-check', error as Error, { phone: wa })
-        }
-      }
-
-      // Detect affirmative response to verification offer
-      // Use .trim() to handle whitespace and check if message STARTS with affirmative word
-      const trimmedBody = body.toLowerCase().trim()
-      const isAffirmativeResponse =
-        trimmedBody === 'ok' ||
-        trimmedBody === 'ok!' ||
-        trimmedBody.startsWith('ok ') ||
-        trimmedBody === 'sim' ||
-        trimmedBody === 'sim!' ||
-        trimmedBody.startsWith('sim ') ||
-        trimmedBody === 'pode ser' ||
-        trimmedBody.startsWith('pode ser') ||
-        trimmedBody === 'vamos lá' ||
-        trimmedBody === 'vamos la' ||
-        trimmedBody === 'vamos' ||
-        trimmedBody.startsWith('vamos ') ||
-        trimmedBody === 'claro' ||
-        trimmedBody.startsWith('claro ') ||
-        trimmedBody === 'quero' ||
-        trimmedBody.startsWith('quero ') ||
-        trimmedBody === 's' ||
-        trimmedBody === 'yes' ||
-        trimmedBody === 'yes!' ||
-        trimmedBody.startsWith('yes ')
-
-      // Detect if customer wants to sell a watch OR if active verification session exists
-      const wantsSellWatch =
-        body.toLowerCase().includes('vender') ||
-        (body.toLowerCase().includes('comprar') && body.toLowerCase().includes('vocês')) ||
-        body.toLowerCase().includes('compram') ||
-        (enhancedSession && enhancedSession.state !== 'completed') ||
-        // CRITICAL: If session exists and customer sends media, continue verification flow
-        (enhancedSession && numMedia > 0) ||
-        // CRITICAL: If AI offered verification and customer gave affirmative response
-        (aiOfferedVerification && isAffirmativeResponse)
-
-      if (enhancedVerificationEnabled && offersWatchPurchaseEnabled && wantsSellWatch) {
-        // Handle enhanced verification workflow
-        responseMessage = await handleEnhancedVerification(
-          enhancedSession,
-          body,
-          numMedia,
-          mediaUrls,
-          validTenantId,
-          wa
-        )
-      } else {
-        // Step 7: Check if this is part of a booking workflow
-        let bookingSession = await getBookingSession(wa)
-
-      // Detect booking intent from message
-      const wantsBooking =
-        body.toLowerCase().includes('agendar') ||
-        body.toLowerCase().includes('marcar') ||
-        body.toLowerCase().includes('visita') ||
-        body.toLowerCase().includes('horário') ||
-        body.toLowerCase().includes('horario') ||
-        (bookingSession && bookingSession.state !== 'completed')
-
-      if (wantsBooking) {
-        // Handle booking workflow
-        responseMessage = await handleBookingConversation(bookingSession, body, validTenantId, wa)
-      } else {
-        // Step 7: Regular conversation with RAG (product recommendations)
-        try {
-          // CRITICAL FIX: Import conversation guards
-          const { shouldSendGreeting, getLastAIMessage } = await import('@/lib/conversation-guards')
-
-          // Handle media-only messages (photos without text)
-          let messageContent = body
-          if (numMedia > 0 && (!body || body.trim().length === 0)) {
-            // CRITICAL FIX: Check what customer was doing before sending photo
-            const lastAIMessage = await getLastAIMessage(validTenantId, wa)
-
-            if (lastAIMessage?.includes('enviar fotos') || lastAIMessage?.includes('pode me enviar')) {
-              // Customer is continuing verification flow
-              messageContent = 'Enviei a foto que você pediu'
-            } else {
-              messageContent = 'Enviei uma foto'
-            }
-
-            logInfo('media-only-message', 'Handling media-only message with context', {
-              phone: wa,
-              numMedia,
-              mediaUrl: mediaUrls[0],
-              lastAIMessage: lastAIMessage?.substring(0, 50),
-            })
-          }
-
-          // CRITICAL FIX: Check if we should skip greeting (active conversation)
-          const skipGreeting = !(await shouldSendGreeting(validTenantId, wa))
-
-          logInfo('greeting-check', 'Greeting decision made', {
-            phone: wa,
-            skipGreeting,
-            messageContent: messageContent.substring(0, 50),
-          })
-
-          // Build RAG context with semantic search (first pass)
-          let ragContext = await buildRAGContext(messageContent, {
-            tenantId: validTenantId,
-            customerPhone: wa,
-            includeConversationHistory: true,
-            maxHistoryMessages: 10,
-            skipGreeting, // NEW PARAMETER
-          })
-
-          // CRITICAL FIX: Extract customer name BEFORE generating response
-          if (!ragContext.customerName && body.trim().length > 0) {
-            const lastAIMessage = await getLastAIMessage(validTenantId, wa)
-            const extractedName = await extractCustomerName(body, lastAIMessage || '')
-            if (extractedName) {
-              // Update customer record with name
-              try {
-                const existingCustomers = await atSelect('Customers', {
-                  filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}')`,
-                })
-
-                if (existingCustomers.length > 0) {
-                  await atUpdate('Customers', existingCustomers[0].id, {
-                    name: extractedName,
-                    last_interaction: new Date().toISOString(),
-                  } as any)
-
-                  logInfo('customer-name-extracted', 'Extracted and saved customer name', {
-                    phone: wa,
-                    name: extractedName,
-                  })
-                } else {
-                  // Create customer if doesn't exist
-                  await atCreate('Customers', {
-                    tenant_id: [validTenantId],
-                    phone: wa,
-                    name: extractedName,
-                    created_at: new Date().toISOString(),
-                    last_interaction: new Date().toISOString(),
-                  } as any)
-
-                  logInfo('customer-created-with-name', 'New customer created with name', {
-                    phone: wa,
-                    name: extractedName,
-                  })
-                }
-
-                // CRITICAL: Update ragContext with extracted name and rebuild prompt
-                ragContext = await buildRAGContext(messageContent, {
-                  tenantId: validTenantId,
-                  customerPhone: wa,
-                  includeConversationHistory: true,
-                  maxHistoryMessages: 10,
-                  skipGreeting,
-                })
-
-                logInfo('rag-context-rebuilt', 'RAG context rebuilt with customer name', {
-                  phone: wa,
-                  name: extractedName,
-                  hasName: !!ragContext.customerName,
-                })
-              } catch (error: any) {
-                logError('customer-name-extraction', error, { phone: wa })
-              }
-            }
-          }
-
-          // Generate AI response with catalog context (NOW with customer name available)
-          // Include media URL in the user message if present
-          const userMessage = numMedia > 0
-            ? `${messageContent}\n\n[Foto recebida: ${mediaUrls[0]}]`
-            : messageContent
-
-          responseMessage = await chat(
-            [
-              {
-                role: 'system',
-                content: ragContext.systemPrompt,
-              },
-              { role: 'user', content: userMessage },
-            ],
-            0.65
-          )
-
-          // Track customer interests from conversation
-          if (ragContext.relevantProducts.length > 0 && ragContext.searchPerformed) {
-            logInfo('whatsapp-rag-recommendation', 'RAG product recommendations sent', {
-              phone: wa,
-              productsFound: ragContext.relevantProducts.length,
-            })
-
-            // Update or create customer with interests
-            try {
-              const existingCustomers = await atSelect('Customers', {
-                filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}')`,
-              })
-
-              const productTitles = ragContext.relevantProducts.slice(0, 3).map(p => p.title)
-
-              if (existingCustomers.length > 0) {
-                // Update existing customer interests
-                const customer = existingCustomers[0]
-                const currentInterests = customer.fields.interests || []
-                const currentInterestsAll = customer.fields.interests_all || []
-
-                // Filter out duplicates from new interests
-                const newInterests = productTitles.filter(title => !currentInterestsAll.includes(title))
-
-                if (newInterests.length > 0 || productTitles.length > 0) {
-                  // interests_all: Keep growing list (no limit for historical tracking)
-                  const updatedInterestsAll = [...currentInterestsAll, ...newInterests]
-
-                  // interests: Last 5 only (for campaigns and priority)
-                  // Add new interests to the END, then take last 5
-                  const allInterestsCombined = [...currentInterestsAll, ...newInterests]
-                  const updatedInterestsRecent = allInterestsCombined.slice(-5) // Last 5
-
-                  await atUpdate('Customers', customer.id, {
-                    interests: updatedInterestsRecent,
-                    interests_all: updatedInterestsAll,
-                    last_interaction: new Date().toISOString(),
-                  } as any)
-
-                  logInfo('customer-interest-tracked', 'Updated customer interests', {
-                    phone: wa,
-                    newInterests: newInterests.length,
-                    totalInterestsAll: updatedInterestsAll.length,
-                    recentInterests: updatedInterestsRecent.length,
-                  })
-                }
-              } else {
-                // Create new customer with initial interests
-                await atCreate('Customers', {
-                  tenant_id: [validTenantId],
-                  phone: wa,
-                  name: '', // Will be filled later during booking or feedback
-                  interests: productTitles, // Recent (same as all initially)
-                  interests_all: productTitles, // Historical (all interests ever)
-                  created_at: new Date().toISOString(),
-                  last_interaction: new Date().toISOString(),
-                } as any)
-
-                logInfo('customer-created-with-interests', 'New customer created with interests', {
-                  phone: wa,
-                  interests: productTitles.length,
-                })
-              }
-            } catch (error: any) {
-              // Don't fail the whole conversation if interest tracking fails
-              logError('customer-interest-tracking', error, { phone: wa })
-            }
-          }
-        } catch (error: any) {
-          // Fallback to basic conversation if RAG fails
-          logError('whatsapp-rag', error, { phone: wa })
-          responseMessage = await chat(
-            [
-              {
-                role: 'system',
-                content:
-                  'Você é um concierge humano, educado e objetivo. Se o cliente pedir verificação de relógio, explique os passos e peça confirmação antes de iniciar.',
-              },
-              { role: 'user', content: body },
-            ],
-            0.65
-          )
-        }
-      }
-      }
-    }
-
-    // Step 7a: Extract and save facts from conversation (every 5 messages)
-    try {
-      const { processConversationForFacts } = await import('@/lib/customer-facts')
-
-      // Count recent messages to decide if we should extract facts
-      const recentMessages = await atSelect('Messages', {
-        filterByFormula: `AND({tenant_id}='${validTenantId}', {phone}='${wa}', {deleted_at}=BLANK())`,
-        sort: '[{"field":"created_at","direction":"desc"}]',
-        maxRecords: '20',
-      })
-
-      const messageCount = recentMessages.length
-
-      // Extract facts every 5 messages or at end of conversation
-      if (messageCount > 0 && messageCount % 5 === 0) {
-        logInfo('fact-extraction-triggered', `Extracting facts after ${messageCount} messages`, {
-          phone: wa,
-        })
-
-        // Run in background (don't block response)
-        processConversationForFacts(validTenantId, wa, 10).catch(error => {
-          logError('background-fact-extraction', error as Error, { phone: wa })
-        })
-      }
-    } catch (error: any) {
-      logError('fact-extraction-check', error, { phone: wa })
-    }
-
-    // Step 7b: Send message via Twilio Messaging API (instead of TwiML)
-    // This bypasses sandbox geographic restrictions
-    const { sendWhatsAppMessage } = await import('@/lib/twilio')
-    const messageSent = await sendWhatsAppMessage(from, responseMessage, to)
-
-    if (messageSent) {
-      // Log outbound message only if sent successfully
-      await atCreate('Messages', {
-        tenant_id: [validTenantId], // Linked record field requires array
-        phone: wa,
-        body: responseMessage,
-        direction: 'outbound',
-        created_at: new Date().toISOString(),
-      } as any)
-
-      logInfo('twilio-webhook-success', 'Message sent via Messaging API', {
-        phone: wa,
-        responseLength: responseMessage.length,
-      })
-    } else {
-      logError('twilio-webhook', new Error('Failed to send message via Messaging API'), {
-        phone: wa,
-      })
-    }
-
-    // Step 8: Return empty TwiML (message already sent via API)
+    // Step 6: Return empty TwiML immediately
     return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
       headers: { 'content-type': 'application/xml' },
     })
+
   } catch (e: any) {
     logError('twilio-webhook', e, {
       errorMessage: e.message,
@@ -882,8 +521,8 @@ async function handleSalespersonFeedback(
         try {
           const customer = session.matched_customers
             ? session.matched_customers.find(
-                (c: any) => c.fields.phone === session.customer_phone
-              )
+              (c: any) => c.fields.phone === session.customer_phone
+            )
             : await findCustomerByPhone(tenantId, session.customer_phone)
 
           if (!customer) {
@@ -1126,16 +765,16 @@ Primeiro, envie uma foto clara do relógio mostrando o mostrador e a caixa.
       // Compare serials (allow for partial matches - some invoices abbreviate)
       if (serials.guarantee && serials.invoice) {
         if (serials.guarantee !== serials.invoice &&
-            !serials.guarantee.includes(serials.invoice) &&
-            !serials.invoice.includes(serials.guarantee)) {
+          !serials.guarantee.includes(serials.invoice) &&
+          !serials.invoice.includes(serials.guarantee)) {
           mismatches.push(`📌 Serial no certificado: **${serials.guarantee}**\n📌 Serial na Nota Fiscal: **${serials.invoice}**`)
         }
       }
 
       if (serials.photo && serials.guarantee) {
         if (serials.photo !== serials.guarantee &&
-            !serials.photo.includes(serials.guarantee) &&
-            !serials.guarantee.includes(serials.photo)) {
+          !serials.photo.includes(serials.guarantee) &&
+          !serials.guarantee.includes(serials.photo)) {
           mismatches.push(`📌 Serial na foto: **${serials.photo}**\n📌 Serial no certificado: **${serials.guarantee}**`)
         }
       }

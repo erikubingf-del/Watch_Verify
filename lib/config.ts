@@ -1,95 +1,51 @@
 /**
- * Environment configuration with runtime validation
- * Ensures all required environment variables are present
+ * Bot Configuration
+ * Centralizes limits, feature flags, and system instructions.
  */
 
-const requiredEnvVars = [
-  'AIRTABLE_BASE_ID',
-  'AIRTABLE_API_KEY',
-  'OPENAI_API_KEY',
-  'NEXTAUTH_SECRET',
-] as const
+export const config = {
+  // Feature Flags
+  features: {
+    audioInput: true,
+    audioOutput: true,
+    imageInput: true,
+    imageOutput: false, // Not yet implemented
+  },
 
-const optionalEnvVars = [
-  'OPENAI_CHAT_MODEL',
-  'OPENAI_EMBEDDING_MODEL',
-  'TWILIO_ACCOUNT_SID',
-  'TWILIO_AUTH_TOKEN',
-  'MAKE_WEBHOOK_ALERT',
-  'UPSTASH_REDIS_REST_URL',
-  'UPSTASH_REDIS_REST_TOKEN',
-  'NEXTAUTH_URL',
-  'NODE_ENV',
-] as const
+  // Limits & Safety
+  limits: {
+    maxInputCharacters: 4096, // WhatsApp limit is higher, but good to cap for AI
+    maxOutputTokens: 1000,
+    chatHistoryLimit: 20,
+    maxMessagesPerChat: 500, // Prevent abuse
+    maxAudioDurationSeconds: 120, // 2 minutes
+    maxImageSizeBytes: 5 * 1024 * 1024, // 5MB
+  },
 
-type EnvVar = typeof requiredEnvVars[number] | typeof optionalEnvVars[number]
+  // System Instructions
+  botInstructions: `You are WatchVerify AI, a specialized assistant for a luxury watch authentication service.
+Your primary role is to assist customers with:
+1. Verifying the authenticity of luxury watches.
+2. Booking appointments to visit our store.
+3. Answering questions about our catalog and services.
 
-/**
- * Validates that all required environment variables are present
- * Call this at app startup to fail fast if config is missing
- */
-export function validateEnv() {
-  const missing: string[] = []
+Tone & Style:
+- Professional, knowledgeable, and polite.
+- Concise and direct.
+- Use Portuguese (PT-BR) by default, unless the user speaks another language.
 
-  for (const key of requiredEnvVars) {
-    if (!process.env[key]) {
-      missing.push(key)
-    }
-  }
+Rules:
+- Do NOT hallucinate. If you don't know something, ask for more information or offer to connect with a human.
+- Do NOT process requests unrelated to watches, jewelry, or our services.
+- If a user sends a photo, assume it's for verification or catalog matching.
+- If a user asks to talk to a human, respect that immediately.`,
 
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables:\n${missing.map(k => `  - ${k}`).join('\n')}\n\nPlease check your .env.local file.`
-    )
-  }
-}
-
-/**
- * Get environment variable with type safety
- */
-export function getEnv(key: EnvVar, fallback?: string): string {
-  const value = process.env[key]
-  if (!value && !fallback) {
-    if (requiredEnvVars.includes(key as any)) {
-      throw new Error(`Required environment variable ${key} is not set`)
-    }
-    return ''
-  }
-  return value || fallback || ''
-}
-
-/**
- * Check if app is running in production
- */
-export function isProduction(): boolean {
-  return process.env.NODE_ENV === 'production'
-}
-
-/**
- * Check if app is running in development
- */
-export function isDevelopment(): boolean {
-  return process.env.NODE_ENV === 'development'
-}
-
-/**
- * Get base URL for the application
- */
-export function getBaseUrl(): string {
-  if (process.env.NEXTAUTH_URL) {
-    return process.env.NEXTAUTH_URL
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`
-  }
-  return 'http://localhost:3000'
-}
-
-// Validate environment on module load (only in production)
-if (isProduction()) {
-  try {
-    validateEnv()
-  } catch (error) {
-    console.error('Environment validation failed:', error)
+  // Message Templates
+  messages: {
+    unknownCommand: 'Desculpe, não entendi. Poderia reformular?',
+    audioNotSupported: 'Desculpe, não consigo processar áudios no momento. Por favor, envie texto.',
+    imageNotSupported: 'Desculpe, não consigo processar imagens no momento.',
+    tooManyMessages: 'Você atingiu o limite de mensagens. Um de nossos atendentes entrará em contato em breve.',
+    error: 'Tive um problema técnico. Por favor, tente novamente mais tarde.',
   }
 }

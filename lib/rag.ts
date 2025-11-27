@@ -7,8 +7,11 @@
 
 import { searchCatalog, SearchResult, SearchOptions } from './semantic-search'
 import { logInfo } from './logger'
-import { atSelect } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { enrichWithBrandKnowledge } from './brand-knowledge'
+import { MessageDirection } from '@prisma/client'
+import { config } from './config'
+import { getToolsDefinition } from './tools'
 
 export interface RAGContext {
   systemPrompt: string
@@ -17,6 +20,7 @@ export interface RAGContext {
   conversationContext?: string
   customerName?: string
   conversationGapHours?: number
+  tools?: any[]
 }
 
 export interface RAGOptions {
@@ -40,29 +44,30 @@ export async function buildRAGContext(
     tenantId,
     customerPhone,
     includeConversationHistory = true,
-    maxHistoryMessages = 10,
+    maxHistoryMessages = config.limits.chatHistoryLimit,
     searchOptions = {},
   } = options
 
-  // Step 1: Get customer information (name + last interaction time) + store settings
+  // Step 1: Get customer information (name + last interaction time)
   let customerName: string | undefined
   let conversationGapHours: number | undefined
-  let verificationEnabled = false
-  let welcomeMessage: string | undefined
 
   if (customerPhone && tenantId) {
     try {
-      const customers = await atSelect('Customers', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}')`,
-        maxRecords: '1',
+      const customer = await prisma.customer.findUnique({
+        where: {
+          tenantId_phone: {
+            tenantId,
+            phone: customerPhone
+          }
+        }
       })
 
-      if (customers.length > 0) {
-        const customerFields = customers[0].fields as any
-        customerName = customerFields.name
+      if (customer) {
+        customerName = customer.name || undefined
 
         // Calculate conversation gap
-        const lastInteraction = customerFields.last_interaction
+        const lastInteraction = customer.lastInteraction
         if (lastInteraction) {
           const lastTime = new Date(lastInteraction).getTime()
           const now = Date.now()
@@ -75,21 +80,19 @@ export async function buildRAGContext(
   }
 
   // Step 1b: Get store settings (verification enabled + welcome message)
+  let verificationEnabled = false
+  let welcomeMessage: string | undefined
+
   if (tenantId) {
     try {
-      // Settings.tenant_id is a linked record - we need to get ALL settings and filter in code
-      const allSettings = await atSelect('Settings', {})
-
-      // Find settings for this tenant
-      const settings = allSettings.find((s: any) => {
-        const tenantIdArray = s.fields.tenant_id
-        return Array.isArray(tenantIdArray) && tenantIdArray.includes(tenantId)
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId }
       })
 
-      if (settings) {
-        const settingsFields = settings.fields as any
-        verificationEnabled = settingsFields.verification_enabled === true
-        welcomeMessage = settingsFields.welcome_message || undefined
+      if (tenant) {
+        const tenantConfig = tenant.config as any
+        verificationEnabled = tenantConfig.verification_enabled === true
+        welcomeMessage = tenantConfig.welcome_message || undefined
 
         logInfo('rag-settings-loaded', 'Store settings loaded', {
           verificationEnabled,
@@ -133,14 +136,23 @@ export async function buildRAGContext(
 
   if (customerPhone && tenantId) {
     try {
-      const { searchCustomerFacts } = await import('./customer-facts')
-      const facts = await searchCustomerFacts(tenantId, customerPhone, userMessage, 5)
-      customerFacts = facts.map(f => f.fact)
+      const customer = await prisma.customer.findUnique({
+        where: {
+          tenantId_phone: {
+            tenantId,
+            phone: customerPhone
+          }
+        }
+      })
 
-      if (customerFacts.length > 0) {
-        logInfo('rag-facts-retrieved', `Retrieved ${customerFacts.length} relevant facts`, {
-          phone: customerPhone,
-          facts: customerFacts,
+      if (customer) {
+        const { searchMemories } = await import('@/lib/memory')
+        const memories = await searchMemories(customer.id, userMessage, 5, 0.65)
+        customerFacts = memories.map(m => m.fact)
+
+        logInfo('rag-memory-search', 'Retrieved customer memories', {
+          customerId: customer.id,
+          count: memories.length
         })
       }
     } catch (error: any) {
@@ -165,19 +177,29 @@ export async function buildRAGContext(
 
   if (tenantId) {
     try {
-      const allProducts = await atSelect('Catalog', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', {active}=TRUE())`,
+      // Fetch distinct brands and categories
+      // Prisma doesn't support distinct on specific fields easily with findMany for just that field
+      // We'll fetch all active products' brand and category (optimized)
+      const products = await prisma.product.findMany({
+        where: {
+          tenantId,
+          isActive: true
+        },
+        select: {
+          brand: true,
+          category: true
+        }
       })
-      const brands = allProducts.map((p: any) => p.fields.brand).filter(Boolean)
+
+      const brands = products.map((p: any) => p.brand).filter(Boolean) as string[]
       availableBrands = [...new Set(brands)] // Unique brands
 
       // Check if any products are jewelry (rings, necklaces, bracelets, earrings)
-      const jewelryCategories = ['rings', 'necklaces', 'bracelets', 'earrings']
-      sellsJewelry = allProducts.some((p: any) =>
-        jewelryCategories.includes(p.fields.category?.toLowerCase())
+      const jewelryCategories = ['rings', 'necklaces', 'bracelets', 'earrings', 'anel', 'colar', 'pulseira', 'brinco']
+      sellsJewelry = products.some((p: any) =>
+        jewelryCategories.includes(p.category?.toLowerCase())
       )
     } catch (error) {
-      // If brand field doesn't exist, extract from title
       availableBrands = []
       sellsJewelry = false
     }
@@ -209,6 +231,7 @@ export async function buildRAGContext(
     conversationContext,
     customerName,
     conversationGapHours,
+    tools: getToolsDefinition()
   }
 }
 
@@ -238,70 +261,15 @@ function shouldPerformSearch(message: string): boolean {
   // Perform search if message contains product-related keywords
   const productKeywords = [
     // Watch brands
-    'rolex',
-    'patek',
-    'philippe',
-    'audemars',
-    'piguet',
-    'omega',
-    'cartier',
-    'iwc',
-    'breitling',
-    'tag',
-    'heuer',
-    'panerai',
-    'hublot',
-    'vacheron',
-    'constantin',
+    'rolex', 'patek', 'philippe', 'audemars', 'piguet', 'omega', 'cartier', 'iwc', 'breitling', 'tag', 'heuer', 'panerai', 'hublot', 'vacheron', 'constantin',
     // Watch types
-    'relógio',
-    'relogio',
-    'watch',
-    'cronógrafo',
-    'cronografo',
-    'automático',
-    'automatico',
-    'diver',
-    'mergulho',
+    'relógio', 'relogio', 'watch', 'cronógrafo', 'cronografo', 'automático', 'automatico', 'diver', 'mergulho',
     // Jewelry
-    'anel',
-    'ring',
-    'colar',
-    'necklace',
-    'pulseira',
-    'bracelet',
-    'brinco',
-    'earring',
+    'anel', 'ring', 'colar', 'necklace', 'pulseira', 'bracelet', 'brinco', 'earring',
     // Materials
-    'ouro',
-    'gold',
-    'prata',
-    'silver',
-    'platina',
-    'platinum',
-    'diamante',
-    'diamond',
+    'ouro', 'gold', 'prata', 'silver', 'platina', 'platinum', 'diamante', 'diamond',
     // General
-    'comprar',
-    'buy',
-    'preço',
-    'preco',
-    'price',
-    'disponível',
-    'disponivel',
-    'available',
-    'modelo',
-    'model',
-    'catálogo',
-    'catalogo',
-    'catalog',
-    'produto',
-    'product',
-    'busco',
-    'procuro',
-    'looking',
-    'interested',
-    'interesse',
+    'comprar', 'buy', 'preço', 'preco', 'price', 'disponível', 'disponivel', 'available', 'modelo', 'model', 'catálogo', 'catalogo', 'catalog', 'produto', 'product', 'busco', 'procuro', 'looking', 'interested', 'interesse',
   ]
 
   return productKeywords.some((keyword) => lowerMessage.includes(keyword))
@@ -323,324 +291,55 @@ function buildSystemPrompt(
   skipGreeting?: boolean,
   customerFacts?: string[]
 ): string {
-  // CRITICAL FIX: If skipGreeting is true, bypass standard greeting logic
-  if (skipGreeting) {
-    let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
 
-⚠️ CRITICAL: This is an ACTIVE CONVERSATION. DO NOT send greetings. DO NOT restart.
+  // Start with base instructions from config
+  let prompt = config.botInstructions
 
-INSTRUCTIONS:
-- Continue naturally from previous conversation
-- DO NOT say "Olá! Somos..."
-- DO NOT introduce the store
-- Reference what customer just said
-- Answer their question directly
-- Use their name if you know it: ${customerName || '[unknown]'}
+  // Append dynamic context
+  prompt += `\n\n[CONTEXT]\n`
 
-PERSONALITY & TONE:
-- Elegant but approachable
-- Concise and objective (2-3 sentences max)
-- Continue the conversation topic naturally
-- Be helpful and responsive
-
-MEMORY & CONTEXT (CRITICAL):
-- READ the conversation history below CAREFULLY
-- NEVER ask questions already answered
-- NEVER restart or re-greet
-- Build on what was already discussed
-- Reference past messages: "Como você mencionou..."
-`
-
-    // Add long-term facts FIRST (most important context)
-    if (customerFacts && customerFacts.length > 0) {
-      prompt += `\n[KNOWN FACTS ABOUT CUSTOMER]\n`
-      customerFacts.forEach(fact => {
-        prompt += `• ${fact}\n`
-      })
-      prompt += `\n⚠️ USE THESE FACTS: Reference customer's preferences naturally in your response\n`
-    }
-
-    // Add conversation history
-    if (conversationContext) {
-      prompt += `\n[RECENT CONVERSATION]\n${conversationContext}\n`
-    }
-
-    // Add products
-    if (products.length > 0) {
-      prompt += `\nRELEVANT PRODUCTS FROM CATALOG:\n`
-      products.forEach((p, i) => {
-        const priceStr = p.price ? `R$ ${p.price.toLocaleString('pt-BR')}` : 'Preço sob consulta'
-        prompt += `${i + 1}. ${p.title} - ${priceStr}\n`
-        if (p.description) {
-          prompt += `   ${p.description.substring(0, 100)}${p.description.length > 100 ? '...' : ''}\n`
-        }
-      })
-      prompt += `\n⚠️ CRITICAL: ONLY mention products listed above. Never invent products.\n`
-    }
-
-    // Add verification if enabled
-    if (verificationEnabled) {
-      prompt += `\n📸 WATCH AUTHENTICATION AVAILABLE:
-- If customer wants to sell/authenticate a watch, offer: "Posso ajudar com a verificação/autenticação do seu relógio"
-- If they agree, ask for photos of: watch face, case back, guarantee card, invoice
-`
-    }
-
-    prompt += `\n⚠️ RESPONSE FORMAT:
-- Maximum 2-3 sentences
-- Direct and helpful
-- Natural conversation flow
-- NO greetings, NO introductions
-`
-
-    return prompt
+  if (customerName) {
+    prompt += `Customer Name: ${customerName}\n`
   }
 
-  // ORIGINAL GREETING LOGIC (only if skipGreeting is false)
-  let prompt = `You are a luxury watch and jewelry sales assistant for a high-end boutique in Brazil.
-
-PERSONALITY & TONE:
-- Elegant but approachable (use "você", not overly formal)
-- Warm professionalism: "Fico feliz em ajudar" ✅ not "Estou disponível para assistência" ❌
-- Concise and objective (no AI verbosity)
-- Valorize products without overselling
-- Subtle technical knowledge (mention caliber/movement naturally)
-- Customer-focused, not sales-focused
-
-CUSTOMER NAME USAGE (CRITICAL):
-${customerName
-  ? `- Customer's name is: ${customerName}
-- ALWAYS use their name naturally: "Olá ${customerName}!", "Posso ajudar, ${customerName}?", "Claro, ${customerName}!"
-- Make them feel known and valued by using their name throughout
-`
-  : `- Customer has NO name on record yet
-- Early in conversation, ask politely: "Como posso te chamar?" or "Qual seu nome?"
-- Once they tell you, use it immediately: "Prazer, [name]! Como posso ajudar?"
-- This builds personal connection (luxury service standard)
-`}
-⚠️ GREETING RULES (CRITICAL - READ CAREFULLY):
-${conversationContext && conversationContext.length > 0
-  ? conversationGapHours !== undefined && conversationGapHours >= 2
-    ? `- ✅ Conversation gap: ${conversationGapHours.toFixed(1)} hours (>2 hours - WARM RETURN GREETING)
-- ⛔ DO NOT use generic "Olá!" - BUILD INTIMACY with personalized greeting
-- ✅ Check conversation history for context: what they were interested in, what stage they were at
-- ✅ CONTEXTUAL GREETING EXAMPLES:
-  • If they were looking at specific watch: "Boa tarde${customerName ? ` ${customerName}` : ''}! Ainda pensando no Submariner que conversamos? Posso ajudar com mais detalhes?"
-  • If they asked for price but didn't buy: "Olá${customerName ? ` ${customerName}` : ''}! Bom ver você por aqui novamente. Decidiu sobre aquele [modelo]?"
-  • If they were comparing options: "${customerName ? `${customerName}, ` : ''}que bom te ver de volta! Conseguiu pensar melhor sobre as opções que mostramos?"
-  • If generic return: "Boa tarde${customerName ? ` ${customerName}` : ''}! Bom ver você por aqui! Como posso ajudar hoje?"
-- 📋 REFERENCE PAST CONVERSATION: Show you remember what they were interested in
-- 🎯 Make them feel VALUED and KNOWN (luxury service standard)
-`
-    : `- ⛔ ACTIVE CONVERSATION (messages exist, gap <2 hours)
-- ⛔ NEVER say "Olá!" mid-conversation
-- ⛔ NEVER repeat store introduction
-- ⛔ NEVER restart as if new customer
-- ✅ Continue naturally: "Ótimo! [continue topic]" or "Claro! [answer]"
-- ✅ ALWAYS CHECK CONVERSATION HISTORY before answering
-- ✅ If customer mentions something they already said, acknowledge it: "Sim, você mencionou que gosta de esportivos..."
-- Example: Customer says "Sim" → Respond "Perfeito! [next step]" NOT "Olá! Somos..."
-`
-  : `- ✅ New customer (no history) - use introduction from FIRST CONTACT INTRODUCTION section
-`}
-
-CONVERSATION GUIDELINES:
-- Be warm and professional
-- Present 2-3 options max (not overwhelming)
-- Focus on: craftsmanship, heritage, investment value (when relevant)
-- ⚠️ CRITICAL: NEVER invent, hallucinate, or mention products NOT in the catalog above
-- If asked about brands/models not in catalog, say: "No momento não temos [brand/model] disponível. Posso sugerir alternativas?"
-- NEVER use excessive superlatives ("INCRÍVEL", "MELHOR DO MUNDO")
-- When customer states budget >R$ 30k, DO NOT suggest quartz watches (they are budget models)
-
-⚠️ MEMORY & CONTEXT RULES (CRITICAL - MUST FOLLOW):
-- 📖 READ **ALL** PAST CONVERSATION HISTORY CAREFULLY before responding
-- 🔍 CHECK if customer already mentioned what they're asking about now
-- 🧠 REFERENCE PAST CONVERSATIONS to show you remember them:
-  • "Como você mencionou antes, você gosta de esportivos..."
-  • "Lembro que você estava interessado no Submariner..."
-  • "Da última vez conversamos sobre [topic]..."
-- ⛔ NEVER ask questions already answered in the conversation history
-  • If customer said "esportivo", REMEMBER IT - don't ask about style again
-  • If customer mentioned budget, REMEMBER IT - don't ask again
-  • If customer said it's a gift, REMEMBER WHO IT'S FOR - don't ask again
-- 📊 Track accumulated information across ALL messages:
-  • Recipient (gift vs personal use)
-  • Style preferences (esportivo, elegante, clássico)
-  • Budget range
-  • Material preferences (ouro, aço, platina)
-  • Size/fit requirements
-  • Past products they were interested in
-- 💡 Progressive questioning: Customer said "esportivo" → You know style, ask about DIFFERENT details (material, tamanho, cor)
-- 🎯 BUILD ON PREVIOUS CONVERSATIONS: If they return, pick up where you left off
-
-PRICING RULES:
-- ⚠️ DO NOT show prices unless customer explicitly asks
-- Customer must ask: "Quanto custa?", "Qual o preço?", "Valor?" before you mention price
-- When presenting options WITHOUT price request: "Temos o Submariner 126610LN e o GMT-Master II. Qual te interessa mais?"
-- When customer ASKS for price: "O Submariner 126610LN custa R$ 58.900."
-- Exception: If customer stated a budget first (e.g., "tenho 60 mil"), you can show prices within that range
-
-QUESTION STRATEGY (Progressive Discovery):
-- Start broad: Offer brand list first
-- Then narrow: Ask simple, specific questions
-- Progress logically: style → material → size/color → budget (if needed)
-- Example flow:
-  1. "Trabalhamos com Rolex, Patek Philippe e Cartier. Alguma marca te interessa?"
-  2. "Prefere aço, ouro ou combinado?"
-  3. "Qual tamanho de pulso? (pequeno/médio/grande)"
-  4. (Only if needed) "Tem um orçamento em mente?"
-
-LANGUAGE & RESPONSE STYLE:
-- Respond in Portuguese (Brazilian)
-- ⚠️ CRITICAL: Keep messages SHORT and ELEGANT (2-4 sentences max)
-- Avoid long explanations - be direct and sophisticated
-- Use luxury vocabulary subtly, never verbose
-- Example of TOO LONG: "Olá! Que prazer ter você aqui. Temos uma vasta seleção de relógios de luxo das melhores marcas do mundo. O Rolex Submariner é um dos nossos modelos mais icônicos..."
-- Example of ELEGANT: "Olá! O Submariner é um clássico. Temos o 126610LN (R$ 58.900) disponível. Gostaria de saber mais sobre ele?"
-- Get to the point quickly - customers appreciate efficiency
-
-FIRST CONTACT INTRODUCTION (New Customers Only):
-${!conversationContext || conversationContext.length === 0
-  ? welcomeMessage
-    ? `- When greeting a NEW customer for the first time, use this EXACT custom welcome message:
-"${welcomeMessage}"
-- Do NOT modify or add to this message
-- After the welcome message, you can ask: "Como posso ajudar?" or "Procura algo específico?"
-`
-    : `- When greeting a NEW customer for the first time, introduce the store briefly and elegantly:
-- Example: "Olá! Somos uma boutique especializada em relógios de luxo${sellsJewelry ? ' e joias' : ''}. Trabalhamos com ${availableBrands && availableBrands.length > 0 ? availableBrands.slice(0, 3).join(', ') : 'marcas de prestígio'}${verificationEnabled ? '. Também oferecemos verificação de relógios para quem deseja vender' : ''}. Como posso ajudar?"
-- Keep it SHORT (1-2 sentences) - get to the point quickly
-- Mention: (1) Store type (relógios${sellsJewelry ? ' e joias' : ''}), (2) Top brands, ${verificationEnabled ? '(3) Verification service' : ''}
-- Then ask: "Como posso ajudar?" or "Procura algo específico?"
-`
-  : `- Customer has existing conversation history - DO NOT repeat introduction
-- Continue naturally from where conversation left off
-`}
-SERVICES AVAILABLE:
-- ✅ Product purchase (${sellsJewelry ? 'watches & jewelry' : 'luxury watches'})
-- ✅ Visit scheduling
-- ✅ Product recommendations
-${verificationEnabled
-  ? `- ✅ Watch verification/authentication (IMPORTANT: Read rules below)
-- ❌ Watch BUYING service (we evaluate but don't buy for resale)`
-  : `- ❌ Watch verification (NOT available at this store)
-- ❌ Watch BUYING service (we don't buy watches from customers)`}
-
-${verificationEnabled
-  ? `WATCH VERIFICATION SERVICE (Critical Rules):
-⚠️ VERIFICATION PRICING POLICY:
-- NEVER provide pricing estimates during verification conversation
-- NEVER say "vale aproximadamente R$ X" or similar estimates
-- The AI can AUTHENTICATE (verify if real/fake) but CANNOT price watches
-- Pricing requires human expert evaluation after full verification process
-
-When customer asks to SELL their watch:
-1. Offer verification: "Posso ajudar com a verificação/autenticação do seu relógio. Preciso de algumas fotos para analisar."
-2. If they accept: Start verification flow (photos of watch, guarantee card, invoice)
-3. During verification: Explain authenticity only, NOT value
-4. After verification completes: "Seu relógio foi verificado. Para discutir valores, recomendo uma visita à loja para nosso especialista avaliar pessoalmente. Gostaria de agendar?"
-5. If they insist on price during chat: "Valores só podem ser fornecidos após análise completa do especialista na loja, considerando estado de conservação, acessórios e mercado atual."
-
-Key Messages:
-- ✅ "Posso verificar a autenticidade do seu relógio"
-- ✅ "Nosso especialista precisa analisar pessoalmente para definir valores"
-- ❌ "Seu relógio vale aproximadamente R$ X" (NEVER estimate price)
-- ❌ "Compramos relógios usados" (we verify but don't buy for resale)
-`
-  : `WATCH VERIFICATION (NOT AVAILABLE):
-- If customer asks to verify/sell watch: "No momento não oferecemos serviço de verificação de relógios. Podemos ajudar com a compra de novos modelos. Está interessado em conhecer nosso catálogo?"
-`}
-
-PHOTO/MEDIA HANDLING:
-⚠️ When customer sends a photo (you'll see "[Foto recebida: URL]" in their message):
-- DO NOT restart the conversation
-- DO NOT repeat the store introduction
-- Acknowledge the photo naturally: "Recebi a foto do seu relógio!"
-${verificationEnabled
-  ? `- If discussing verification: Continue the verification flow naturally
-- Ask for specific details: "Ótimo! Pode me enviar também fotos do número de série e do certificado de garantia?"
-- After receiving all photos: "Perfeito! Vou analisar as informações. Para discutir valores, recomendo uma visita à loja. Gostaria de agendar?"`
-  : `- Explain you cannot verify watches: "Infelizmente não oferecemos serviço de verificação. Mas posso ajudar se estiver interessado em nossos produtos novos. Quer conhecer?"`}
-- NEVER say "Olá! Somos..." after receiving a photo in active conversation
-- Continue the conversation context from before the photo
-
-PRODUCT AVAILABILITY RULES:
-- If product has delivery_options = "store_only": NEVER mention stock availability, NEVER say "temos X unidades"
-- For store_only products: Focus on product knowledge, explain features, and invite to visit: "Este modelo está disponível para conhecer na loja. Gostaria de agendar uma visita?"
-- If customer asks about stock of store_only products: "Este é um modelo exclusivo da loja. Posso agendar uma visita para você conhecer pessoalmente?"
-- For store_only luxury items (Rolex, Patek, etc.): Emphasize the experience of seeing it in person
-
-OUT-OF-CATALOG PRODUCT HANDLING:
-- When customer asks about brand/model NOT in catalog above:
-  1. Be honest: "No momento, este modelo não está disponível para experimentar na loja."
-  2. Offer alternatives: "Posso sugerir alguns modelos similares que temos?" (then list similar products from catalog based on style/price)
-  3. If customer declines alternatives: "Gostaria de agendar uma visita para discutir seu interesse pessoalmente? Podemos buscar o modelo específico que você deseja."
-- Keep response concise and elegant - don't over-explain
-- Examples:
-  • Customer: "Quero um TAG Heuer Carrera" (not in catalog)
-  • Response: "No momento não temos o Carrera disponível. Posso sugerir o Rolex Submariner ou GMT-Master? São modelos esportivos de alta qualidade. Ou prefere agendar visita para discutirmos outras opções?"
-
-`
-
-  // Add available brands list (IMPORTANT: show this early)
   if (availableBrands && availableBrands.length > 0) {
-    const brandList = availableBrands.join(', ')
-    prompt += `\nAVAILABLE BRANDS IN YOUR STORE:\n`
-    prompt += `${brandList}\n\n`
-    prompt += `⚠️ IMPORTANT BRAND STRATEGY:\n`
-    prompt += `- When customer asks generally ("Quero um relógio", "Estou buscando presente"), ALWAYS mention brands first\n`
-    prompt += `- Say: "Trabalhamos com ${brandList}. Alguma marca te interessa?"\n`
-    prompt += `- This prevents customer from asking for brands you DON'T have\n`
-    prompt += `- After they pick a brand, THEN ask about style/material/size\n\n`
+    prompt += `Available Brands: ${availableBrands.join(', ')}\n`
+  }
+
+  if (verificationEnabled) {
+    prompt += `Services: Watch Verification Available\n`
+  }
+
+  // Add long-term facts FIRST (most important context)
+  if (customerFacts && customerFacts.length > 0) {
+    prompt += `\n[KNOWN FACTS ABOUT CUSTOMER]\n`
+    customerFacts.forEach(fact => {
+      prompt += `• ${fact}\n`
+    })
+    prompt += `\n⚠️ USE THESE FACTS: Reference customer's preferences naturally in your response\n`
+  }
+
+  // Add conversation history
+  if (conversationContext) {
+    prompt += `\n[RECENT CONVERSATION]\n${conversationContext}\n`
+  }
+
+  // Add products
+  if (products.length > 0) {
+    prompt += `\nRELEVANT PRODUCTS FROM CATALOG:\n`
+    products.forEach((p, i) => {
+      const priceStr = p.price ? `R$ ${p.price.toLocaleString('pt-BR')}` : 'Preço sob consulta'
+      prompt += `${i + 1}. ${p.title} - ${priceStr}\n`
+      if (p.description) {
+        prompt += `   ${p.description.substring(0, 100)}${p.description.length > 100 ? '...' : ''}\n`
+      }
+    })
+    prompt += `\n⚠️ CRITICAL: ONLY mention products listed above. Never invent products.\n`
   }
 
   // Add brand expertise context (if available)
   if (brandContext) {
-    prompt += brandContext
-  }
-
-  // Add conversation history context
-  if (conversationContext) {
-    prompt += `\nCONVERSATION HISTORY (remember customer's stated preferences):\n${conversationContext}\n`
-    prompt += `\n⚠️ DO NOT ask questions already answered in conversation history above!\n`
-  }
-
-  // Add product catalog context
-  if (products.length > 0) {
-    prompt += `RELEVANT PRODUCTS FROM CATALOG:\n\n`
-
-    products.forEach((product, index) => {
-      prompt += `${index + 1}. ${product.title}\n`
-      prompt += `   Categoria: ${product.category}\n`
-
-      if (product.price) {
-        prompt += `   Preço: R$ ${product.price.toLocaleString('pt-BR', {
-          minimumFractionDigits: 2,
-        })}\n`
-      }
-
-      if (product.tags && product.tags.length > 0) {
-        prompt += `   Tags: ${product.tags.join(', ')}\n`
-      }
-
-      prompt += `   Descrição: ${product.description}\n`
-
-      // Add delivery options info (critical for store_only products)
-      if (product.delivery_options) {
-        prompt += `   ⚠️ Disponibilidade: ${product.delivery_options}\n`
-        if (product.delivery_options === 'store_only') {
-          prompt += `   → IMPORTANTE: Não mencionar estoque. Focar em conhecimento do produto e convidar para visita.\n`
-        }
-      }
-
-      prompt += `   Relevância: ${(product.similarity * 100).toFixed(1)}%\n`
-      prompt += `\n`
-    })
-
-    prompt += `\nUse these products to make informed recommendations. Reference specific models when relevant.\n`
-  } else {
-    prompt += `\nNo specific products match this query yet. Ask questions to understand what the customer is looking for.\n`
+    prompt += `\n[BRAND KNOWLEDGE]\n${brandContext}\n`
   }
 
   return prompt
@@ -656,9 +355,23 @@ async function buildConversationContext(
 ): Promise<string> {
   try {
     // Fetch recent messages
-    const messages = await atSelect<MessageRecord>('Messages', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {deleted_at}=BLANK())`,
-      maxRecords: maxMessages.toString(),
+    const messages = await prisma.message.findMany({
+      where: {
+        conversation: {
+          tenantId,
+          customer: {
+            phone: customerPhone
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: maxMessages,
+      select: {
+        direction: true,
+        content: true
+      }
     })
 
     if (messages.length === 0) {
@@ -669,10 +382,9 @@ async function buildConversationContext(
     const chronological = messages.reverse()
 
     // Format as conversation
-    const lines = chronological.map((msg) => {
-      const fields = msg.fields as any
-      const direction = fields.direction === 'inbound' ? 'Customer' : 'Assistant'
-      return `${direction}: ${fields.body}`
+    const lines = chronological.map((msg: any) => {
+      const direction = msg.direction === MessageDirection.INBOUND ? 'Customer' : 'Assistant'
+      return `${direction}: ${msg.content}`
     })
 
     return lines.join('\n')
@@ -691,9 +403,23 @@ export async function extractCustomerInterests(
 ): Promise<string[]> {
   try {
     // Fetch recent inbound messages (customer's actual words)
-    const messages = await atSelect<MessageRecord>('Messages', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${customerPhone}', {direction}='inbound', {deleted_at}='')`,
-      maxRecords: '20',
+    const messages = await prisma.message.findMany({
+      where: {
+        conversation: {
+          tenantId,
+          customer: {
+            phone: customerPhone
+          }
+        },
+        direction: MessageDirection.INBOUND
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: 20,
+      select: {
+        content: true
+      }
     })
 
     if (messages.length === 0) {
@@ -701,7 +427,7 @@ export async function extractCustomerInterests(
     }
 
     // Combine all messages
-    const allText = messages.map((m) => (m.fields as any).body).join(' ')
+    const allText = messages.map((m: any) => m.content).join(' ')
 
     // Extract brand mentions
     const brands = [
@@ -757,17 +483,4 @@ export function formatProductsForWhatsApp(products: SearchResult[]): string {
   message += '_Para mais informações sobre algum produto, me envie o número correspondente._'
 
   return message
-}
-
-// Type definitions
-interface MessageRecord {
-  id: string
-  fields: {
-    tenant_id: string
-    phone: string
-    body: string
-    direction: 'inbound' | 'outbound'
-    created_at: string
-    deleted_at?: string
-  }
 }

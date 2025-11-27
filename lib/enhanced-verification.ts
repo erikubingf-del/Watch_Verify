@@ -5,47 +5,49 @@
  * Includes CPF collection, document cross-referencing, and comprehensive reports.
  */
 
-import { atSelect, atCreate, atUpdate } from '@/utils/airtable'
 import { logInfo, logError } from './logger'
 import crypto from 'crypto'
+import { SessionManager } from './session-manager'
 
 // Encryption key for CPF (should be in environment variable)
 const ENCRYPTION_KEY = process.env.CPF_ENCRYPTION_KEY || 'default-key-change-in-production'
 
 export interface EnhancedVerificationSession {
   id: string
-  tenant_id: string
-  customer_phone: string
-  customer_name?: string
+  tenantId: string
+  customerPhone: string
+  customerName?: string
   cpf?: string // Encrypted
-  customer_stated_model?: string
+  customerStatedModel?: string
   state:
-    | 'awaiting_cpf'
-    | 'awaiting_watch_info'
-    | 'awaiting_watch_photo'
-    | 'awaiting_guarantee'
-    | 'awaiting_invoice'
-    | 'awaiting_date_explanation'
-    | 'awaiting_optional_docs'
-    | 'processing'
-    | 'completed'
-  watch_photo_url?: string
-  guarantee_card_url?: string
-  invoice_url?: string
-  additional_documents?: string[]
-  reference_from_photo?: string
-  reference_from_guarantee?: string
-  reference_from_invoice?: string
-  serial_from_photo?: string
-  serial_from_guarantee?: string
-  guarantee_date?: string
-  invoice_date?: string
-  invoice_number?: string
-  invoice_validated?: boolean | null
-  date_mismatch_reason?: string
-  created_at: string
-  updated_at: string
+  | 'awaiting_cpf'
+  | 'awaiting_watch_info'
+  | 'awaiting_watch_photo'
+  | 'awaiting_guarantee'
+  | 'awaiting_invoice'
+  | 'awaiting_date_explanation'
+  | 'awaiting_optional_docs'
+  | 'processing'
+  | 'completed'
+  watchPhotoUrl?: string
+  guaranteeCardUrl?: string
+  invoiceUrl?: string
+  additionalDocuments?: string[]
+  referenceFromPhoto?: string
+  referenceFromGuarantee?: string
+  referenceFromInvoice?: string
+  serialFromPhoto?: string
+  serialFromGuarantee?: string
+  guaranteeDate?: string
+  invoiceDate?: string
+  invoiceNumber?: string
+  invoiceValidated?: boolean | null
+  dateMismatchReason?: string
+  createdAt: string
+  updatedAt: string
 }
+
+const sessionManager = new SessionManager<EnhancedVerificationSession>('verification_session')
 
 /**
  * Encrypt CPF for storage
@@ -81,7 +83,7 @@ export function maskCPF(cpf: string): string {
   if (cleaned.length !== 11) return '***.***.***-**'
 
   // Show only last 5 digits
-  return `***.***.${ cleaned.slice(6, 9)}-${cleaned.slice(9, 11)}`
+  return `***.***.${cleaned.slice(6, 9)}-${cleaned.slice(9, 11)}`
 }
 
 /**
@@ -127,46 +129,7 @@ export function isValidCPF(cpf: string): boolean {
 export async function getEnhancedVerificationSession(
   customerPhone: string
 ): Promise<EnhancedVerificationSession | null> {
-  try {
-    const records = await atSelect('VerificationSessions', {
-      filterByFormula: `AND({customer_phone}='${customerPhone}', {state}!='completed')`,
-      maxRecords: '1',
-    })
-
-    if (records.length === 0) return null
-
-    const record = records[0]
-    const fields = record.fields as any
-
-    return {
-      id: record.id,
-      tenant_id: fields.tenant_id,
-      customer_phone: fields.customer_phone,
-      customer_name: fields.customer_name,
-      cpf: fields.cpf,
-      customer_stated_model: fields.customer_stated_model,
-      state: fields.state,
-      watch_photo_url: fields.watch_photo_url,
-      guarantee_card_url: fields.guarantee_card_url,
-      invoice_url: fields.invoice_url,
-      additional_documents: fields.additional_documents,
-      reference_from_photo: fields.reference_from_photo,
-      reference_from_guarantee: fields.reference_from_guarantee,
-      reference_from_invoice: fields.reference_from_invoice,
-      serial_from_photo: fields.serial_from_photo,
-      serial_from_guarantee: fields.serial_from_guarantee,
-      guarantee_date: fields.guarantee_date,
-      invoice_date: fields.invoice_date,
-      invoice_number: fields.invoice_number,
-      invoice_validated: fields.invoice_validated,
-      date_mismatch_reason: fields.date_mismatch_reason,
-      created_at: fields.created_at,
-      updated_at: fields.updated_at,
-    }
-  } catch (error: any) {
-    logError('get-verification-session', error)
-    return null
-  }
+  return await sessionManager.get(customerPhone)
 }
 
 /**
@@ -177,26 +140,24 @@ export async function createEnhancedVerificationSession(
   customerPhone: string,
   customerName: string
 ): Promise<EnhancedVerificationSession> {
-  const session = {
-    tenant_id: tenantId,
-    customer_phone: customerPhone,
-    customer_name: customerName,
-    state: 'awaiting_cpf' as const,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+  const session: EnhancedVerificationSession = {
+    id: crypto.randomUUID(),
+    tenantId,
+    customerPhone,
+    customerName,
+    state: 'awaiting_cpf',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   }
 
-  const record = await atCreate('VerificationSessions', session)
+  await sessionManager.create(customerPhone, session)
 
   logInfo('verification-session-created', 'New verification session', {
     phone: customerPhone,
     state: session.state,
   })
 
-  return {
-    id: record.id,
-    ...session,
-  }
+  return session
 }
 
 /**
@@ -206,30 +167,18 @@ export async function updateEnhancedVerificationSession(
   customerPhone: string,
   updates: Partial<EnhancedVerificationSession>
 ): Promise<EnhancedVerificationSession | null> {
-  try {
-    const session = await getEnhancedVerificationSession(customerPhone)
-    if (!session) return null
+  const session = await sessionManager.get(customerPhone)
+  if (!session) return null
 
-    const updatedFields = {
-      ...updates,
-      updated_at: new Date().toISOString(),
-    }
+  const updatedSession = { ...session, ...updates, updatedAt: new Date().toISOString() }
+  await sessionManager.create(customerPhone, updatedSession)
 
-    await atUpdate('VerificationSessions', session.id, updatedFields)
+  logInfo('verification-session-updated', 'Session updated', {
+    phone: customerPhone,
+    updates: Object.keys(updates),
+  })
 
-    logInfo('verification-session-updated', 'Session updated', {
-      phone: customerPhone,
-      updates: Object.keys(updates),
-    })
-
-    return {
-      ...session,
-      ...updatedFields,
-    }
-  } catch (error: any) {
-    logError('update-verification-session', error)
-    return null
-  }
+  return updatedSession
 }
 
 /**
@@ -295,10 +244,10 @@ Prefere enviar agora ou que eu envie o relatório atual para a boutique?`
 export function isVerificationComplete(session: EnhancedVerificationSession): boolean {
   return !!(
     session.cpf &&
-    session.customer_stated_model &&
-    session.watch_photo_url &&
-    session.guarantee_card_url &&
-    session.invoice_url
+    session.customerStatedModel &&
+    session.watchPhotoUrl &&
+    session.guaranteeCardUrl &&
+    session.invoiceUrl
   )
 }
 
@@ -308,12 +257,11 @@ export function isVerificationComplete(session: EnhancedVerificationSession): bo
 export async function completeVerificationSession(
   customerPhone: string
 ): Promise<void> {
-  const session = await getEnhancedVerificationSession(customerPhone)
+  const session = await sessionManager.get(customerPhone)
   if (!session) return
 
-  await atUpdate('VerificationSessions', session.id, {
+  await sessionManager.update(customerPhone, {
     state: 'completed',
-    updated_at: new Date().toISOString(),
   })
 
   logInfo('verification-session-completed', 'Session completed', {
