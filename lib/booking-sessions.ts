@@ -5,14 +5,16 @@
  */
 
 import { SessionManager, BaseSession } from './session-manager'
-import { logInfo, logError } from './logger'
+import { logInfo } from './logger'
 import { TimeSlot } from './scheduling'
 
 // Re-export types
-export { TimeSlot }
+export type { TimeSlot }
 
 export interface BookingSession extends BaseSession {
   state: 'awaiting_date' | 'awaiting_time' | 'awaiting_product' | 'completed'
+  customerPhone: string
+  customerName: string
   preferredDate?: string // YYYY-MM-DD
   preferredTime?: string // HH:MM
   availableSlots?: TimeSlot[]
