@@ -38,30 +38,30 @@ export function generateVerificationReport(data: VerificationReportData): string
   } = data
 
   const verificationId = session.id.substring(0, 8).toUpperCase()
-  const timestamp = new Date(session.created_at).toLocaleString('pt-BR')
+  const timestamp = new Date(session.createdAt).toLocaleString('pt-BR')
   const maskedCPF = session.cpf ? maskCPF(session.cpf) : 'Não informado'
 
   // Determine brand and model
   const brand =
-    photoAnalysis.brand || guaranteeAnalysis.brand || session.customer_stated_model?.split(' ')[0]
+    photoAnalysis.brand || guaranteeAnalysis.brand || session.customerStatedModel?.split(' ')[0]
   const model =
     photoAnalysis.model ||
     guaranteeAnalysis.model ||
-    session.customer_stated_model?.split(' ').slice(1).join(' ')
+    session.customerStatedModel?.split(' ').slice(1).join(' ')
 
   // Document checklist
   const docs: string[] = []
-  if (session.watch_photo_url) docs.push('✅ Foto do relógio')
-  if (session.guarantee_card_url) docs.push('✅ Certificado de garantia')
-  if (session.invoice_url) docs.push('✅ Nota Fiscal')
-  if (session.additional_documents && session.additional_documents.length > 0) {
-    docs.push(`✅ ${session.additional_documents.length} documento(s) adicional(is)`)
+  if (session.watchPhotoUrl) docs.push('✅ Foto do relógio')
+  if (session.guaranteeCardUrl) docs.push('✅ Certificado de garantia')
+  if (session.invoiceUrl) docs.push('✅ Nota Fiscal')
+  if (session.additionalDocuments && session.additionalDocuments.length > 0) {
+    docs.push(`✅ ${session.additionalDocuments.length} documento(s) adicional(is)`)
   }
 
   // Build report
   let report = `# RELATÓRIO DE VERIFICAÇÃO - ${brand} ${model}
 
-**Cliente:** ${session.customer_name} (CPF: ${maskedCPF})
+**Cliente:** ${session.customerName} (CPF: ${maskedCPF})
 **Data:** ${timestamp}
 **ID Verificação:** #VER-${verificationId}
 
@@ -103,8 +103,8 @@ ${docs.join('\n')}
 
   report += `| Data Compra | - | ${guaranteeAnalysis.purchase_date || '-'} | ${invoiceAnalysis.invoice_date || '-'} | ${crossReference.date_match ? '✅' : '⚠️'} |\n`
 
-  if (session.date_mismatch_reason) {
-    report += `\n**Explicação do cliente sobre diferença de datas:** ${session.date_mismatch_reason}\n`
+  if (session.dateMismatchReason) {
+    report += `\n**Explicação do cliente sobre diferença de datas:** ${session.dateMismatchReason}\n`
   }
 
   // Legal Risk Assessment (NEW)
@@ -217,23 +217,23 @@ ${docs.join('\n')}
   report += `\n---\n\n**Documentos anexos:**\n`
   let docCount = 0
 
-  if (session.watch_photo_url) {
+  if (session.watchPhotoUrl) {
     docCount++
-    report += `- [Foto do relógio](${session.watch_photo_url})\n`
+    report += `- [Foto do relógio](${session.watchPhotoUrl})\n`
   }
 
-  if (session.guarantee_card_url) {
+  if (session.guaranteeCardUrl) {
     docCount++
-    report += `- [Certificado de garantia](${session.guarantee_card_url})\n`
+    report += `- [Certificado de garantia](${session.guaranteeCardUrl})\n`
   }
 
-  if (session.invoice_url) {
+  if (session.invoiceUrl) {
     docCount++
-    report += `- [Nota Fiscal](${session.invoice_url})\n`
+    report += `- [Nota Fiscal](${session.invoiceUrl})\n`
   }
 
-  if (session.additional_documents && session.additional_documents.length > 0) {
-    session.additional_documents.forEach((url, index) => {
+  if (session.additionalDocuments && session.additionalDocuments.length > 0) {
+    session.additionalDocuments.forEach((url, index) => {
       docCount++
       report += `- [Documento adicional ${index + 1}](${url})\n`
     })
