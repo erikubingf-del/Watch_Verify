@@ -90,9 +90,9 @@ export async function handleSalespersonFeedback(
                 }
 
                 await updateFeedbackSession(salespersonPhone, {
-                    extracted_data: feedbackData,
-                    matched_customers: matchedCustomers,
-                    customer_name: feedbackData.customer_name,
+                    extractedData: feedbackData,
+                    matchedCustomers: matchedCustomers,
+                    customerName: feedbackData.customer_name,
                     state:
                         matchedCustomers.length === 1
                             ? 'awaiting_confirmation'
@@ -140,21 +140,21 @@ export async function handleSalespersonFeedback(
             if (
                 isNaN(choice) ||
                 choice < 1 ||
-                choice > (session.matched_customers?.length || 0)
+                choice > (session.matchedCustomers?.length || 0)
             ) {
-                return `Por favor, responda com o número (1-${session.matched_customers?.length}) ou "nenhum".`
+                return `Por favor, responda com o número (1-${session.matchedCustomers?.length}) ou "nenhum".`
             }
 
-            const selectedCustomer = session.matched_customers[choice - 1]
+            const selectedCustomer = session.matchedCustomers![choice - 1]
 
             await updateFeedbackSession(salespersonPhone, {
-                customer_phone: selectedCustomer.fields.phone,
+                customerPhone: selectedCustomer.fields.phone,
                 state: 'awaiting_confirmation',
             })
 
             return formatConfirmationMessage(
                 selectedCustomer.fields.name,
-                session.extracted_data
+                session.extractedData
             )
         }
 
@@ -178,16 +178,16 @@ export async function handleSalespersonFeedback(
                 await atCreate('Customers', {
                     tenant_id: [tenantId],
                     phone: formattedPhone,
-                    name: session.customer_name || session.extracted_data.customer_name,
+                    name: session.customerName || session.extractedData?.customer_name,
                     created_at: new Date().toISOString(),
                 } as any)
 
                 await updateFeedbackSession(salespersonPhone, {
-                    customer_phone: formattedPhone,
+                    customerPhone: formattedPhone,
                     state: 'awaiting_confirmation',
                 })
 
-                return `✅ Cliente criado!\n\n${formatConfirmationMessage(session.customer_name, session.extracted_data)}`
+                return `✅ Cliente criado!\n\n${formatConfirmationMessage(session.customerName, session.extractedData)}`
             } catch (error: any) {
                 logError('customer-creation-error', error)
                 return '❌ Erro ao criar cliente. Por favor, tente novamente.'
@@ -199,22 +199,22 @@ export async function handleSalespersonFeedback(
             if (lowerMsg === 'sim' || lowerMsg === 's') {
                 // Update customer
                 try {
-                    const customer = session.matched_customers
-                        ? session.matched_customers.find(
-                            (c: any) => c.fields.phone === session.customer_phone
+                    const customer = session.matchedCustomers
+                        ? session.matchedCustomers.find(
+                            (c: any) => c.fields.phone === session.customerPhone
                         )
-                        : await findCustomerByPhone(tenantId, session.customer_phone)
+                        : await findCustomerByPhone(tenantId, session.customerPhone!)
 
                     if (!customer) {
                         return '❌ Cliente não encontrado. Vamos começar de novo? Envie /feedback'
                     }
 
-                    await updateCustomerWithFeedback(customer.id, session.extracted_data)
+                    await updateCustomerWithFeedback(customer.id, session.extractedData)
                     await createVisitRecord(
                         tenantId,
-                        session.customer_phone,
+                        session.customerPhone!,
                         customer.fields.name,
-                        session.extracted_data
+                        session.extractedData
                     )
 
                     await updateFeedbackSession(salespersonPhone, {
@@ -240,15 +240,15 @@ export async function handleSalespersonFeedback(
         if (session.state === 'awaiting_follow_up') {
             if (lowerMsg === 'sim' || lowerMsg === 's') {
                 // Generate and show follow-up message
-                const customer = await findCustomerByPhone(tenantId, session.customer_phone)
+                const customer = await findCustomerByPhone(tenantId, session.customerPhone!)
                 const followUpMessage = await generateFollowUpMessage(
-                    customer?.fields?.name || session.customer_name,
-                    session.extracted_data
+                    customer?.fields?.name || session.customerName,
+                    session.extractedData
                 )
 
                 // Send to customer
                 await sendWhatsAppMessage(
-                    `whatsapp:${session.customer_phone}`,
+                    `whatsapp:${session.customerPhone}`,
                     followUpMessage,
                     `whatsapp:${storeNumber}` // Store number
                 )
@@ -258,7 +258,7 @@ export async function handleSalespersonFeedback(
                     state: 'completed',
                 })
 
-                return `✅ Mensagem enviada para ${customer?.fields?.name || session.customer_name}!\n\n"${followUpMessage}"\n\nFeedback concluído! 🎯`
+                return `✅ Mensagem enviada para ${customer?.fields?.name || session.customerName}!\n\n"${followUpMessage}"\n\nFeedback concluído! 🎯`
             } else if (lowerMsg === 'não' || lowerMsg === 'nao' || lowerMsg === 'n') {
                 await updateFeedbackSession(salespersonPhone, {
                     state: 'completed',
