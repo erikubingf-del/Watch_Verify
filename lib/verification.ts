@@ -54,16 +54,33 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
     if (isCloudinaryConfigured()) {
       try {
         logInfo('verification', 'Uploading documents to Cloudinary')
-        const uploadedUrls = await uploadVerificationDocuments({
-          watchPhotoUrl: request.watchPhotoUrl,
-          guaranteeCardUrl: request.guaranteeCardUrl,
-          invoiceUrl: request.invoiceUrl,
-        })
-        // Merge uploaded URLs with original URLs (keep originals if upload failed for some)
-        permanentUrls = {
-          watchPhoto: uploadedUrls.watchPhoto || permanentUrls.watchPhoto,
-          guaranteeCard: uploadedUrls.guaranteeCard || permanentUrls.guaranteeCard,
-          invoice: uploadedUrls.invoice || permanentUrls.invoice,
+        // Collect all URLs to upload
+        const urlsToUpload: string[] = []
+        const urlMapping: { index: number; key: 'watchPhoto' | 'guaranteeCard' | 'invoice' }[] = []
+
+        if (request.watchPhotoUrl) {
+          urlMapping.push({ index: urlsToUpload.length, key: 'watchPhoto' })
+          urlsToUpload.push(request.watchPhotoUrl)
+        }
+        if (request.guaranteeCardUrl) {
+          urlMapping.push({ index: urlsToUpload.length, key: 'guaranteeCard' })
+          urlsToUpload.push(request.guaranteeCardUrl)
+        }
+        if (request.invoiceUrl) {
+          urlMapping.push({ index: urlsToUpload.length, key: 'invoice' })
+          urlsToUpload.push(request.invoiceUrl)
+        }
+
+        if (urlsToUpload.length > 0) {
+          const sessionId = `ver_${Date.now()}`
+          const uploadedUrls = await uploadVerificationDocuments(urlsToUpload, sessionId)
+
+          // Map uploaded URLs back to their keys
+          urlMapping.forEach(({ index, key }) => {
+            if (uploadedUrls[index]) {
+              permanentUrls[key] = uploadedUrls[index]
+            }
+          })
         }
         logInfo('verification', 'Documents uploaded to Cloudinary successfully')
       } catch (error: any) {
