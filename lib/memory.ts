@@ -72,9 +72,9 @@ export async function searchMemories(
         const embeddingString = `[${embedding.join(',')}]`
         const distanceThreshold = 1 - threshold
 
-        const results = await prisma.$queryRawUnsafe<any[]>(
+        const results = (await prisma.$queryRawUnsafe(
             `
-      SELECT 
+      SELECT
         id, fact, source, confidence, "createdAt",
         1 - (embedding <=> $1::vector) as similarity
       FROM customer_memories
@@ -87,7 +87,7 @@ export async function searchMemories(
             customerId,
             distanceThreshold,
             limit
-        )
+        )) as any[]
 
         return results.map((row: any) => ({
             id: row.id,
