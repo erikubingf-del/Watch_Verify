@@ -1,3 +1,6 @@
+import dotenv from 'dotenv'
+dotenv.config({ path: '.env.local' })
+dotenv.config() // Load .env as fallback/supplement
 import { Worker, Job } from 'bullmq'
 import { redisConnection } from '@/lib/redis'
 import { logInfo, logError } from '@/lib/logger'

@@ -297,12 +297,15 @@ export async function POST(req: NextRequest) {
     const queue = getWhatsAppQueue()
 
     await queue.add('process-message', {
-      from: wa,
-      to: toNumber,
-      body,
+      sender: wa,
+      messageBody: body,
+      numMedia: numMedia,
       mediaUrls,
       tenantId: validTenantId,
-      messageId: messageRecord.id,
+      storeNumber: toNumber,
+      isSalesperson: false, // Webhook doesn't determine this yet, worker can re-check or we can pass if known
+      isGroup: false, // Twilio webhook usually handles 1:1, but we should check if needed
+      isStatus: false,
     }, {
       jobId: `msg-${messageRecord.id}`, // Deduplication
     })

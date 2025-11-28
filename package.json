@@ -14,7 +14,8 @@
     "test-rag": "tsx scripts/test-rag-mock.ts",
     "demo-rag": "tsx scripts/demo-rag-architecture.ts",
     "test-auth": "tsx scripts/test-airtable-auth.ts",
-    "debug-env": "tsx scripts/debug-env.ts"
+    "debug-env": "tsx scripts/debug-env.ts",
+    "worker": "tsx scripts/start-worker.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",
