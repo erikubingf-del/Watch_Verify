@@ -52,7 +52,7 @@ export async function GET() {
     })
 
     // Calculate availability score for each salesperson
-    const salespeopleMapped = salespeople.map((sp) => {
+    const salespeopleMapped = salespeople.map((sp: any) => {
       const appointmentsCount = sp._count.appointments
 
       let availability_score: 'low' | 'medium' | 'high' = 'high'
