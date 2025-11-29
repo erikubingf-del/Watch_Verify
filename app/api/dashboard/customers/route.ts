@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect, buildFormula, buildAndFormula } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logError } from '@/lib/logger'
 
 /**
@@ -21,51 +21,53 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No tenant context' }, { status: 403 })
     }
 
-    // Fetch active customers (not deleted)
-    const customers = await atSelect('Customers', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', {deleted_at}=BLANK())`,
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
+    // Fetch active customers
+    const customers = await prisma.customer.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        conversations: {
+          include: {
+            _count: {
+              select: { messages: true }
+            }
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 1
+        }
+      }
     })
 
-    // Get message counts and verification counts for each customer
+    // Get verification counts and format
     const customersWithStats = await Promise.all(
-      customers.map(async (c: any) => {
-        const phone = c.fields.phone
-
-        // Count messages
-        const messages = await atSelect('Messages', {
-          filterByFormula: buildAndFormula(
-            ['tenant_id', '=', tenantId],
-            ['phone', '=', phone]
-          ),
-        })
-
+      customers.map(async (c) => {
         // Count verifications
-        const verifications = await atSelect('WatchVerify', {
-          filterByFormula: buildAndFormula(
-            ['tenant_id', '=', tenantId],
-            ['phone', '=', phone]
-          ),
+        const verificationsCount = await prisma.watchVerify.count({
+          where: {
+            tenantId,
+            customerPhone: c.phone
+          }
         })
+
+        // Calculate total messages
+        const messageCount = c.conversations.reduce((acc, conv) => acc + conv._count.messages, 0)
 
         // Get last activity
-        const allMessages = messages.sort((a: any, b: any) => {
-          return new Date(b.fields.created_at).getTime() - new Date(a.fields.created_at).getTime()
-        })
-        const lastActivity = allMessages.length > 0
-          ? allMessages[0].fields.created_at
-          : c.fields.created_at
+        const lastActivity = c.lastInteraction || c.createdAt
+
+        // Get profile info
+        const profile = c.profile as any || {}
 
         return {
           id: c.id,
-          name: c.fields.name || 'Unknown',
-          phone: c.fields.phone || '',
-          email: c.fields.email || '',
-          lastInterest: c.fields.last_interest || '',
-          messages: messages.length,
-          verifications: verifications.length,
-          lastActivity,
-          status: messages.length > 0 ? 'active' : 'inactive',
+          name: c.name || 'Unknown',
+          phone: c.phone || '',
+          email: c.email || '',
+          lastInterest: profile.interests?.[0] || '',
+          messages: messageCount,
+          verifications: verificationsCount,
+          lastActivity: lastActivity.toISOString(),
+          status: messageCount > 0 ? 'active' : 'inactive',
         }
       })
     )

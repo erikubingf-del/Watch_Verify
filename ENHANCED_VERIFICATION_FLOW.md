@@ -67,13 +67,13 @@
 
 #### Document 1: Watch Photo
 **AI:**
-> "Ótimo! Vou precisar de algumas fotos e documentos. Primeiro, envie uma foto clara do relógio, mostrando o mostrador e a caixa."
+> "Ótimo! Vou precisar de algumas fotos e documentos. Primeiro, envie uma foto clara do relógio, mostrando todo o relogio."
 
 **Processing:**
 1. Receive media via Twilio
-2. Store in Cloudinary (permanent)
+2. Store  (permanent)
 3. GPT-4 Vision analysis:
-   - Extract reference number from dial/caseback
+   - Extract reference number from dial/caseback (if possible)
    - Identify brand/model from visual
    - Check condition (scratches, authenticity markers)
 4. Store URL in `WatchVerify.photo_url`
@@ -86,12 +86,12 @@
 > "Perfeito! Agora envie uma foto do certificado de garantia (guarantee card)."
 
 **Processing:**
-1. Store in Cloudinary
+1. Store 
 2. GPT-4 Vision OCR:
    - Extract reference number
    - Extract serial number
    - Extract purchase date
-   - Extract store name
+   - Extract store name (if available)
 3. **Cross-Reference:**
    - Compare `reference_from_guarantee` vs `reference_from_watch_photo`
    - Compare `model_from_guarantee` vs `customer_stated_model`
@@ -135,13 +135,12 @@
 
 ---
 
-#### Optional Documents: Additional Evidence
+#### Optional Documents: Additional Evidence if nf_validated: false
 **AI:**
-> "Recebi todos os documentos principais! Para fortalecer a verificação, você pode enviar documentos adicionais (opcional):
+> "Recebi todos os documentos principais! Mas como foi comprado no Exterior e para fortalecer a verificação, você pode enviar documentos adicionais (opcional):
 > - Fatura do cartão de crédito (comprovando a compra)
 > - Comprovante de viagem (se comprou no exterior)
-> - Box original do relógio
-> - Outros certificados ou documentos
+> - Outros certificados ou documentos (hotel em seu nome)
 >
 > Prefere enviar agora ou que eu envie o relatório atual para a boutique?"
 

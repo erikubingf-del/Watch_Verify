@@ -12,6 +12,7 @@ import { chat } from '@/utils/openai'
 import { sendWhatsAppMessage } from '@/lib/twilio'
 import { config } from '@/lib/config'
 import { canReply } from '@/lib/utils/message-filter'
+import { getOrCreateCustomer, updateLastInteraction } from '@/lib/customer'
 
 const QUEUE_NAME = 'whatsapp-messages'
 
@@ -102,6 +103,9 @@ const worker = new Worker<WhatsAppJobData>(
 
             // 5. Handle Customer Flows
             else {
+                // Ensure customer exists and check for first interaction
+                const { customer, isFirstInteraction } = await getOrCreateCustomer(tenantId, sender)
+
                 // Check for active Verification Session
                 const { getEnhancedVerificationSession } = await import('@/lib/enhanced-verification')
                 const verificationSession = await getEnhancedVerificationSession(sender)
@@ -159,6 +163,7 @@ const worker = new Worker<WhatsAppJobData>(
                             const context = await buildRAGContext(messageBody, {
                                 tenantId,
                                 customerPhone: sender,
+                                isFirstInteraction, // Pass detection flag
                             })
 
                             // Use tools if available (Best Practice: Modular Tools)
@@ -228,6 +233,12 @@ const worker = new Worker<WhatsAppJobData>(
                     responseText,
                     `whatsapp:${storeNumber}`
                 )
+
+                // Update last interaction time for customer
+                if (!isSalesperson) {
+                    await updateLastInteraction(job.data.sender) // Use sender from job data to be safe, though we have customer object
+                }
+
                 logInfo('worker-response', 'Response sent', { ...logContext, responseLength: responseText.length })
             }
 

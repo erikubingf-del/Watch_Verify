@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect, atCreate } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,26 +18,26 @@ export async function GET() {
     const tenantId = session.user.tenantId
 
     // Fetch products
-    const products = await atSelect('Catalog', {
-      filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }])
+    const products = await prisma.product.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' }
     })
 
     // Map to frontend format
-    const mapped = products.map((p: any) => ({
+    const mapped = products.map((p) => ({
       id: p.id,
-      title: p.fields.title || '',
-      brand: p.fields.brand || '',
-      description: p.fields.description || '',
-      price: p.fields.price || 0,
-      category: p.fields.category || '',
-      image_url: p.fields.image_url || '',
-      stock_quantity: p.fields.stock_quantity || 0,
-      tags: p.fields.tags ? (Array.isArray(p.fields.tags) ? p.fields.tags : p.fields.tags.split(',').map((t: string) => t.trim())) : [],
-      active: p.fields.active !== false,
-      has_embedding: !!p.fields.embedding,
-      embedding_status: p.fields.embedding ? 'synced' : 'missing',
-      created_at: p.fields.created_at || new Date().toISOString()
+      title: p.title,
+      brand: p.brand || '',
+      description: p.description || '',
+      price: Number(p.price) || 0,
+      category: p.category || '',
+      image_url: p.imageUrl || '',
+      stock_quantity: p.stockQuantity || 0,
+      tags: p.tags,
+      active: p.isActive,
+      has_embedding: false, // TODO: Check embedding status
+      embedding_status: 'missing', // TODO: Check embedding status
+      created_at: p.createdAt.toISOString()
     }))
 
     return NextResponse.json({
@@ -69,19 +69,20 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
 
     // Create product
-    const product = await atCreate('Catalog', {
-      tenant_id: [tenantId],
-      title: body.title,
-      brand: body.brand,
-      description: body.description,
-      price: body.price,
-      category: body.category,
-      image_url: body.image_url || '',
-      stock_quantity: body.stock_quantity || 0,
-      tags: Array.isArray(body.tags) ? body.tags.join(', ') : body.tags,
-      active: body.active !== false,
-      created_at: new Date().toISOString()
-    } as any)
+    const product = await prisma.product.create({
+      data: {
+        tenantId,
+        title: body.title,
+        brand: body.brand,
+        description: body.description,
+        price: body.price,
+        category: body.category,
+        imageUrl: body.image_url || '',
+        stockQuantity: body.stock_quantity || 0,
+        tags: Array.isArray(body.tags) ? body.tags : (body.tags ? [body.tags] : []),
+        isActive: body.active !== false,
+      }
+    })
 
     return NextResponse.json({ success: true, id: product.id })
 

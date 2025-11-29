@@ -186,11 +186,41 @@ export async function isSlotAvailable(
 // ==========================================
 
 /**
+ * Check if a salesperson is working at a specific time based on their shift
+ */
+function isSalespersonWorking(schedule: any, date: string, time: string): boolean {
+  if (!schedule) return true // Default to always available if no schedule defined
+
+  const dateObj = new Date(date)
+  // getDay returns 0 for Sunday, 1 for Monday, etc.
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+  const dayName = days[dateObj.getDay()] // e.g. "monday"
+
+  const shift = schedule[dayName]
+
+  if (!shift || shift === 'off') return false
+
+  const hour = parseInt(time.split(':')[0])
+
+  // Define shift ranges
+  // Morning: < 13:00 (e.g. 08:00 - 12:59)
+  // Afternoon: >= 13:00 (e.g. 13:00 - 18:00)
+
+  if (shift === 'all_day') return true
+  if (shift === 'morning' && hour < 13) return true
+  if (shift === 'afternoon' && hour >= 13) return true
+
+  return false
+}
+
+/**
  * Get least busy salesperson for appointment assignment (round-robin)
+ * Respects working shifts.
  */
 export async function assignSalesperson(
   tenantId: string,
-  date: string
+  date: string,
+  time: string
 ): Promise<Salesperson | null> {
   try {
     // Step 1: Get active salespeople
@@ -207,7 +237,17 @@ export async function assignSalesperson(
       return null
     }
 
-    // Step 2: Get appointments for this date to count current load
+    // Step 2: Filter by Shift Availability
+    const workingSalespeople = salespeople.filter((sp: any) => {
+      return isSalespersonWorking(sp.shiftSchedule, date, time)
+    })
+
+    if (workingSalespeople.length === 0) {
+      logWarn('scheduling', 'No salespeople working at this time', { tenantId, date, time })
+      return null
+    }
+
+    // Step 3: Get appointments for this date to count current load
     const startOfDay = new Date(date)
     startOfDay.setHours(0, 0, 0, 0)
 
@@ -233,35 +273,31 @@ export async function assignSalesperson(
       appointmentsPerSalesperson[apt.salespersonId] = (appointmentsPerSalesperson[apt.salespersonId] || 0) + 1
     }
 
-    // Step 3: Build salesperson list with current load
-    const salespersonList: Salesperson[] = salespeople.map((sp: any) => {
+    // Step 4: Build salesperson list with current load
+    const salespersonList: Salesperson[] = workingSalespeople.map((sp: any) => {
       const currentAppointments = appointmentsPerSalesperson[sp.id] || 0
-
-      // Note: workingHours and maxDailyAppointments are not currently in User model
-      // We'll use defaults for now or assume they might be in a future 'config' field
-      // For now, hardcoding defaults
 
       return {
         id: sp.id,
         name: sp.name,
         whatsapp: sp.whatsapp || '',
         maxDailyAppointments: 5, // Default
-        workingHours: {}, // Default
+        workingHours: sp.shiftSchedule || {},
         currentAppointments,
       }
     })
 
-    // Step 4: Filter out salespeople who are at capacity
+    // Step 5: Filter out salespeople who are at capacity
     const availableSalespeople = salespersonList.filter(
       (sp) => sp.currentAppointments < sp.maxDailyAppointments
     )
 
     if (availableSalespeople.length === 0) {
-      logWarn('scheduling', 'All salespeople at capacity', { tenantId, date })
+      logWarn('scheduling', 'All working salespeople at capacity', { tenantId, date, time })
       return null
     }
 
-    // Step 5: Sort by least busy (round-robin)
+    // Step 6: Sort by least busy (round-robin)
     availableSalespeople.sort((a, b) => a.currentAppointments - b.currentAppointments)
 
     const assigned = availableSalespeople[0]
@@ -270,7 +306,7 @@ export async function assignSalesperson(
       salespersonId: assigned.id,
       name: assigned.name,
       currentLoad: assigned.currentAppointments,
-      maxCapacity: assigned.maxDailyAppointments,
+      shift: assigned.workingHours,
     })
 
     return assigned
@@ -324,7 +360,7 @@ export async function bookAppointment(
     })
 
     // Step 3: Assign salesperson
-    const salesperson = await assignSalesperson(tenantId, date)
+    const salesperson = await assignSalesperson(tenantId, date, time)
     if (!salesperson) {
       logWarn('scheduling', 'No salesperson available', { tenantId, date })
       return null

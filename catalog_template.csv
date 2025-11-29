@@ -1,0 +1,4 @@
+title,brand,description,category,price,tags,imageUrl,stockQuantity,isActive
+Rolex Submariner Date,Rolex,"Relógio automático de mergulho, 40mm, aço inoxidável, mostrador preto.",Watches,85000,"luxury,sport,automatic",https://example.com/submariner.jpg,1,true
+Omega Speedmaster Moonwatch,Omega,"Relógio cronógrafo icônico, 42mm, aço inoxidável, mostrador preto.",Watches,38000,"luxury,sport,chronograph",https://example.com/speedmaster.jpg,2,true
+Anel Solitário Diamante 1ct,N/A,"Anel solitário em ouro branco 18k com diamante central de 1 quilate.",Jewelry,35000,"luxury,diamond,ring",https://example.com/ring.jpg,5,true

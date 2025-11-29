@@ -37,6 +37,7 @@ model Tenant {
   campaigns       Campaign[]
   watchVerifications WatchVerify[]
   availability    StoreAvailability[]
+  knowledgeBase   KnowledgeBase[]
   
   @@map("tenants")
 }
@@ -62,6 +63,7 @@ model User {
   role            UserRole
   phone           String?  // Personal phone
   whatsapp        String?  // Work WhatsApp
+  shiftSchedule   Json?    // { "monday": "morning", "tuesday": "all_day" }
   
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
@@ -191,6 +193,9 @@ model Product {
   category        String
   brand           String?
   price           Decimal?
+  imageUrl        String?
+  stockQuantity   Int      @default(1)
+  fulfillmentOptions String[] // ["delivery", "pickup"]
   
   // Vector Search
   embedding       Unsupported("vector(1536)")?
@@ -205,6 +210,24 @@ model Product {
 
   @@index([tenantId, category])
   @@map("products")
+}
+
+model KnowledgeBase {
+  id        String   @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
+  
+  title     String
+  content   String   @db.Text
+  source    String?  // filename
+  tags      String[]
+  
+  embedding Unsupported("vector(1536)")?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("knowledge_base")
 }
 
 // ---------------------------------------------------------
@@ -298,6 +321,14 @@ model WatchVerify {
   
   icd             Float?
   status          String   // rejected, approved, manual_review
+  
+  // Enhanced Verification Fields
+  statedModel     String?
+  extractedReferences String[]
+  legalRiskLabel  String?
+  legalRiskScore  Int?
+  reportUrl       String?
+  manualReviewRequested Boolean @default(false)
   
   photoUrl        String?
   guaranteeUrl    String?

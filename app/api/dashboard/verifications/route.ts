@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect, buildFormula } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logError } from '@/lib/logger'
 
 /**
@@ -27,39 +27,31 @@ export async function GET(req: NextRequest) {
     const limit = searchParams.get('limit') || '10'
 
     // Fetch verifications
-    const verifications = await atSelect('WatchVerify', {
-      filterByFormula: buildFormula('tenant_id', '=', tenantId),
-      maxRecords: String(limit),
-      sort: JSON.stringify([{ field: 'created_at', direction: 'desc' }]),
+    const verifications = await prisma.watchVerify.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: parseInt(limit)
     })
 
     // Map to frontend format
-    const mapped = verifications.map((v: any) => {
+    const mapped = verifications.map((v) => {
       // Parse legal risk data if available
       let criticalIssues: string[] = []
       let warnings: string[] = []
 
-      try {
-        if (v.fields.issues) {
-          criticalIssues = JSON.parse(v.fields.issues)
-        }
-      } catch (e) {
-        // Ignore parse errors
+      if (Array.isArray(v.issues)) {
+        criticalIssues = v.issues as string[]
       }
 
-      try {
-        if (v.fields.recommendations) {
-          warnings = JSON.parse(v.fields.recommendations)
-        }
-      } catch (e) {
-        // Ignore parse errors
+      if (Array.isArray(v.recommendations)) {
+        warnings = v.recommendations as string[]
       }
 
       // Determine legal risk based on ICD score (simplified - enhance with actual legal_risk_summary field when available)
       let legalRiskLabel = 'Documentação Completa'
       let legalRiskColor: 'green' | 'yellow' | 'orange' | 'red' = 'green'
 
-      const icd = v.fields.icd || 0
+      const icd = v.icd || 0
       if (icd < 30) {
         legalRiskLabel = 'Documentos Suspeitos'
         legalRiskColor = 'red'
@@ -76,24 +68,24 @@ export async function GET(req: NextRequest) {
 
       return {
         id: v.id,
-        customer: v.fields.customer || 'N/A',
-        phone: v.fields.phone || '',
-        cpf: v.fields.cpf || null, // Include CPF for masking on frontend
-        brand: v.fields.brand || 'N/A',
-        model: v.fields.model || '',
-        reference: v.fields.reference || '',
-        serial: v.fields.serial || '',
+        customer: v.customerName || 'N/A',
+        phone: v.customerPhone || '',
+        cpf: v.cpf || null, // Include CPF for masking on frontend
+        brand: v.brand || 'N/A',
+        model: v.model || '',
+        reference: v.reference || '',
+        serial: v.serial || '',
         icd: icd,
-        status: v.fields.status || 'pending',
+        status: v.status || 'pending',
         legal_risk_label: legalRiskLabel,
         legal_risk_color: legalRiskColor,
         critical_issues: criticalIssues,
         warnings: warnings,
-        date: v.fields.created_at || v.fields.completed_at || new Date().toISOString(),
-        photo_url: v.fields.photo_url || '',
-        guarantee_url: v.fields.guarantee_url || '',
-        invoice_url: v.fields.invoice_url || '',
-        notes: v.fields.notes || '',
+        date: v.createdAt.toISOString(),
+        photo_url: v.photoUrl || '',
+        guarantee_url: v.guaranteeUrl || '',
+        invoice_url: v.invoiceUrl || '',
+        notes: v.notes || '',
       }
     })
 

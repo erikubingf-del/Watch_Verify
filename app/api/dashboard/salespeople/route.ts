@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,26 +18,42 @@ export async function GET() {
 
     const tenantId = session.user.tenantId
 
-    // Fetch salespeople
-    const salespeople = await atSelect('Salespeople', {
-      filterByFormula: `{tenant_id} = '${tenantId}'`
-    })
+    // Calculate date range for today
+    const startOfDay = new Date()
+    startOfDay.setHours(0, 0, 0, 0)
 
-    // Fetch today's appointments to calculate availability
-    const today = new Date().toISOString().split('T')[0]
-    const appointments = await atSelect('Appointments', {
-      filterByFormula: `AND(
-        {tenant_id} = '${tenantId}',
-        IS_AFTER({scheduled_at}, '${today}'),
-        IS_BEFORE({scheduled_at}, DATEADD('${today}', 1, 'days'))
-      )`
+    const endOfDay = new Date()
+    endOfDay.setHours(23, 59, 59, 999)
+
+    // Fetch salespeople with today's appointment count
+    const salespeople = await prisma.user.findMany({
+      where: {
+        tenantId,
+        role: 'SALESPERSON',
+        isActive: true
+      },
+      include: {
+        _count: {
+          select: {
+            appointments: {
+              where: {
+                scheduledAt: {
+                  gte: startOfDay,
+                  lte: endOfDay
+                },
+                status: {
+                  not: 'CANCELLED'
+                }
+              }
+            }
+          }
+        }
+      }
     })
 
     // Calculate availability score for each salesperson
-    const salespeopleMapped = salespeople.map((sp: any) => {
-      const appointmentsCount = appointments.filter((apt: any) =>
-        apt.fields.salesperson_id && apt.fields.salesperson_id[0] === sp.id
-      ).length
+    const salespeopleMapped = salespeople.map((sp) => {
+      const appointmentsCount = sp._count.appointments
 
       let availability_score: 'low' | 'medium' | 'high' = 'high'
       if (appointmentsCount >= 5) {
@@ -48,11 +64,11 @@ export async function GET() {
 
       return {
         id: sp.id,
-        name: sp.fields.name || '',
-        phone: sp.fields.phone || '',
+        name: sp.name || '',
+        phone: sp.phone || '',
         availability_score,
         appointments_count: appointmentsCount,
-        working_hours: sp.fields.working_hours || '9h-18h',
+        working_hours: '9h-18h', // TODO: Add working hours to User model
       }
     })
 

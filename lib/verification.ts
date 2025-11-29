@@ -1,7 +1,7 @@
 import { calcICD, ICDInput } from '@/utils/icdCalculator'
 import { analyzeWatchPhoto, analyzeGuaranteeCard, analyzeInvoice, compareDocuments } from './vision'
 import { lookupWatch, verifyDealer, validatePrice } from './chrono24'
-import { atCreate } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logInfo, logError, logWarn } from './logger'
 import { sendAlertToMake } from '@/utils/alertHandler'
 import { uploadVerificationDocuments, isCloudinaryConfigured } from './cloudinary'
@@ -186,21 +186,25 @@ export async function runVerification(request: VerificationRequest): Promise<Ver
     }
 
     // Step 9: Save to Airtable with permanent URLs
-    const verification = await atCreate('WatchVerify', {
-      tenant_id: request.tenantId,
-      customer: request.customerName,
-      phone: request.customerPhone,
-      brand: brand,
-      model: model || '',
-      reference: reference || '',
-      serial: watchAnalysis?.serial || guaranteeAnalysis?.serial || '',
-      icd,
-      status,
-      photo_url: permanentUrls.watchPhoto || '',
-      guarantee_url: permanentUrls.guaranteeCard || '',
-      invoice_url: permanentUrls.invoice || '',
-      notes: issues.join('\n'),
-      created_at: new Date().toISOString(),
+    // Step 9: Save to Postgres with permanent URLs
+    const verification = await prisma.watchVerify.create({
+      data: {
+        tenantId: request.tenantId,
+        customerName: request.customerName,
+        customerPhone: request.customerPhone,
+        brand: brand,
+        model: model || '',
+        reference: reference || '',
+        serial: watchAnalysis?.serial || guaranteeAnalysis?.serial || '',
+        icd,
+        status,
+        photoUrl: permanentUrls.watchPhoto || '',
+        guaranteeUrl: permanentUrls.guaranteeCard || '',
+        invoiceUrl: permanentUrls.invoice || '',
+        notes: issues.join('\n'),
+        issues: issues,
+        recommendations: recommendations,
+      }
     })
 
     // Step 10: Trigger alert if ICD < 80

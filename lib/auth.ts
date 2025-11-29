@@ -1,6 +1,6 @@
 import NextAuth from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { atSelect } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { logInfo, logError } from './logger'
 
@@ -18,48 +18,48 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         try {
-          // Query Airtable Users table
-          const users = await atSelect('Users', {
-            filterByFormula: `({email}='${String(credentials.email).replace(/'/g, "\\'")}')`,
+          // Query Postgres Users table
+          const user = await prisma.user.findFirst({
+            where: {
+              email: String(credentials.email),
+            },
           })
 
-          if (!users.length) {
+          if (!user) {
             logInfo('auth', 'Login attempt failed - user not found', { email: credentials.email })
             return null
           }
 
-          const user = users[0]
-
           // Check if user is active
-          if (!user.fields.active) {
-            logInfo('auth', 'Login attempt failed - user not active', { email: user.fields.email })
+          if (!user.isActive) {
+            logInfo('auth', 'Login attempt failed - user not active', { email: user.email })
             return null
           }
 
           // Verify password
           const passwordMatch = await bcrypt.compare(
             String(credentials.password),
-            user.fields.password_hash as string
+            user.passwordHash
           )
 
           if (!passwordMatch) {
-            logInfo('auth', 'Login attempt failed - invalid password', { email: user.fields.email })
+            logInfo('auth', 'Login attempt failed - invalid password', { email: user.email })
             return null
           }
 
           logInfo('auth', 'Login successful', {
-            email: user.fields.email,
-            role: user.fields.role,
-            tenantId: user.fields.tenant_id?.[0]
+            email: user.email,
+            role: user.role,
+            tenantId: user.tenantId
           })
 
           // Return user object (will be stored in JWT)
           return {
             id: user.id,
-            email: user.fields.email as string,
-            name: user.fields.name as string,
-            tenantId: user.fields.tenant_id?.[0] || null,
-            role: user.fields.role as string,
+            email: user.email,
+            name: user.name,
+            tenantId: user.tenantId,
+            role: user.role,
           }
         } catch (error) {
           logError('auth', error as Error, { email: credentials.email })

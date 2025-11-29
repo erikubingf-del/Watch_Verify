@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,93 +18,69 @@ export async function GET() {
 
     const tenantId = session.user.tenantId
 
-    // Fetch all messages for this tenant
-    const messages = await atSelect('Messages', {
-      filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: JSON.stringify([{ field: 'timestamp', direction: 'desc' }])
+    // Fetch conversations with details
+    const conversationsData = await prisma.conversation.findMany({
+      where: { tenantId },
+      include: {
+        customer: {
+          include: {
+            appointments: {
+              orderBy: { scheduledAt: 'desc' },
+              take: 1
+            }
+          }
+        },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 5 // Take last 5 for summary context
+        }
+      },
+      orderBy: { updatedAt: 'desc' }
     })
 
-    // Fetch appointments to check for scheduled visits
-    const appointments = await atSelect('Appointments', {
-      filterByFormula: `{tenant_id} = '${tenantId}'`
-    })
-
-    // Group messages by customer phone
-    const conversationMap = new Map<string, any>()
-
-    for (const msg of messages) {
-      const phone = msg.fields.from_number || msg.fields.to_number
-      if (!phone) continue
-
-      if (!conversationMap.has(phone)) {
-        conversationMap.set(phone, {
-          id: msg.id,
-          customer_phone: phone,
-          customer_name: msg.fields.customer_name || '',
-          messages: [],
-          last_message_time: msg.fields.timestamp,
-          products_shown: new Set<string>(),
-        })
-      }
-
-      const conversation = conversationMap.get(phone)!
-      conversation.messages.push(msg.fields)
-
-      // Extract product mentions from message content
-      // This is a simple implementation - you might want to enhance this with AI
-      const content = msg.fields.content?.toLowerCase() || ''
-      if (content.includes('submariner')) conversation.products_shown.add('Submariner')
-      if (content.includes('daytona')) conversation.products_shown.add('Daytona')
-      if (content.includes('datejust')) conversation.products_shown.add('Datejust')
-      if (content.includes('gmt')) conversation.products_shown.add('GMT-Master')
-      if (content.includes('nautilus')) conversation.products_shown.add('Nautilus')
-      if (content.includes('aquanaut')) conversation.products_shown.add('Aquanaut')
-      if (content.includes('royal oak')) conversation.products_shown.add('Royal Oak')
-    }
-
-    // Build conversation objects
-    const conversations = Array.from(conversationMap.values()).map(conv => {
-      // Find appointment for this customer
-      const appointment = appointments.find(apt =>
-        apt.fields.customer_phone === conv.customer_phone
-      )
+    const conversations = conversationsData.map(conv => {
+      const lastMessage = conv.messages[0]
+      const appointment = conv.customer.appointments[0]
 
       // Determine status
       let status: 'active' | 'scheduled' | 'converted' | 'inactive' = 'inactive'
-      const lastMessageDate = new Date(conv.last_message_time)
+      const lastMessageDate = lastMessage ? new Date(lastMessage.createdAt) : new Date(conv.updatedAt)
       const daysSinceLastMessage = Math.floor((Date.now() - lastMessageDate.getTime()) / (1000 * 60 * 60 * 24))
 
       if (appointment) {
-        status = appointment.fields.status === 'completed' ? 'converted' : 'scheduled'
+        status = appointment.status === 'COMPLETED' ? 'converted' : 'scheduled'
       } else if (daysSinceLastMessage <= 7) {
         status = 'active'
       }
 
-      // Generate AI summary (simplified - you might want to use OpenAI for this)
-      let interest_summary = 'Cliente em conversação inicial'
-      if (conv.products_shown.size > 0) {
-        const products = Array.from(conv.products_shown).join(', ')
-        interest_summary = `Interesse em: ${products}`
-      }
-      if (conv.messages.some((m: any) => m.content?.toLowerCase().includes('verificar') || m.content?.toLowerCase().includes('autenticar'))) {
-        interest_summary += ' | Solicita verificação de relógio'
-      }
-      if (conv.messages.some((m: any) => m.content?.toLowerCase().includes('comprar') || m.content?.toLowerCase().includes('preço'))) {
-        interest_summary += ' | Interessado em compra'
+      // Generate summary from messages
+      let interest_summary = conv.summary || 'Cliente em conversação inicial'
+
+      // If no AI summary, do a basic keyword check on recent messages
+      if (!conv.summary && conv.messages.length > 0) {
+        const recentContent = conv.messages.map(m => m.content.toLowerCase()).join(' ')
+        const products = []
+        if (recentContent.includes('submariner')) products.push('Submariner')
+        if (recentContent.includes('daytona')) products.push('Daytona')
+        if (recentContent.includes('datejust')) products.push('Datejust')
+
+        if (products.length > 0) {
+          interest_summary = `Interesse em: ${products.join(', ')}`
+        }
       }
 
       return {
         id: conv.id,
-        customer_name: conv.customer_name || 'Cliente sem nome',
-        customer_phone: conv.customer_phone,
-        last_message_time: conv.last_message_time,
+        customer_name: conv.customer.name || 'Cliente sem nome',
+        customer_phone: conv.customer.phone,
+        last_message_time: lastMessage ? lastMessage.createdAt.toISOString() : conv.updatedAt.toISOString(),
         interest_summary,
-        products_shown: Array.from(conv.products_shown),
-        visit_scheduled: !!appointment,
-        visit_date: appointment?.fields.scheduled_at,
+        products_shown: [], // TODO: Extract from message metadata if available
+        visit_scheduled: !!appointment && appointment.status !== 'COMPLETED' && appointment.status !== 'CANCELLED',
+        visit_date: appointment ? appointment.scheduledAt.toISOString() : undefined,
         status,
-        message_count: conv.messages.length,
-        last_interaction: conv.last_message_time
+        message_count: conv.messages.length, // This is just the fetched count (5), ideally we'd have a total count
+        last_interaction: lastMessage ? lastMessage.createdAt.toISOString() : conv.updatedAt.toISOString()
       }
     })
 

@@ -1,4 +1,4 @@
-import { atSelect } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logInfo, logWarn } from './logger'
 
 /**
@@ -153,7 +153,7 @@ export async function lookupWatch(
 }
 
 /**
- * Lookup in Airtable catalog
+ * Lookup in Postgres catalog
  */
 async function lookupInCatalog(
   brand: string,
@@ -161,24 +161,33 @@ async function lookupInCatalog(
   reference?: string
 ): Promise<WatchMarketData | null> {
   try {
-    // Build filter formula
-    let formula = `AND(LOWER({brand})=LOWER('${brand}'), LOWER({title})=FIND(LOWER('${model}'), LOWER({title})))`
+    // Basic search in Products table
+    // We look for products that match the brand and contain the model name in the title
+    const product = await prisma.product.findFirst({
+      where: {
+        brand: {
+          equals: brand,
+          mode: 'insensitive'
+        },
+        title: {
+          contains: model,
+          mode: 'insensitive'
+        },
+        isActive: true
+      }
+    })
 
-    const results = await atSelect('Catalog', { filterByFormula: formula, maxRecords: '1' })
-
-    if (results.length > 0) {
-      const item = results[0].fields as any
-
+    if (product) {
       logInfo('chrono24', `Watch found in catalog`, { brand, model })
 
       return {
         brand,
         model,
         reference: reference || '',
-        averagePrice: item.price || 0,
+        averagePrice: Number(product.price) || 0,
         priceRange: {
-          min: item.price * 0.85,
-          max: item.price * 1.15,
+          min: Number(product.price) * 0.85,
+          max: Number(product.price) * 1.15,
         },
         productionYears: 'Unknown',
         found: true,

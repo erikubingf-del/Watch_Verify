@@ -30,6 +30,7 @@ export interface RAGOptions {
   maxHistoryMessages?: number
   searchOptions?: SearchOptions
   skipGreeting?: boolean
+  isFirstInteraction?: boolean
 }
 
 /**
@@ -46,6 +47,7 @@ export async function buildRAGContext(
     includeConversationHistory = true,
     maxHistoryMessages = config.limits.chatHistoryLimit,
     searchOptions = {},
+    isFirstInteraction = false,
   } = options
 
   // Step 1: Get customer information (name + last interaction time)
@@ -79,9 +81,10 @@ export async function buildRAGContext(
     }
   }
 
-  // Step 1b: Get store settings (verification enabled + welcome message)
+  // Step 1b: Get store settings (verification enabled + welcome message + instructions)
   let verificationEnabled = false
   let welcomeMessage: string | undefined
+  let customInstructions: string | undefined
 
   if (tenantId) {
     try {
@@ -93,10 +96,14 @@ export async function buildRAGContext(
         const tenantConfig = tenant.config as any
         verificationEnabled = tenantConfig.verification_enabled === true
         welcomeMessage = tenantConfig.welcome_message || undefined
+        customInstructions = tenantConfig.bot_instructions || undefined
 
         logInfo('rag-settings-loaded', 'Store settings loaded', {
           verificationEnabled,
           hasWelcomeMessage: !!welcomeMessage,
+          hasCustomInstructions: !!customInstructions,
+          allowedBrands: tenantConfig.allowed_brands,
+          isFirstInteraction
         })
       }
     } catch (error: any) {
@@ -171,34 +178,46 @@ export async function buildRAGContext(
     )
   }
 
-  // Step 4: Get available brands from catalog + detect if store sells jewelry
+  // Step 4: Get available brands (Config > Catalog) + detect if store sells jewelry
   let availableBrands: string[] = []
   let sellsJewelry = false
 
   if (tenantId) {
     try {
-      // Fetch distinct brands and categories
-      // Prisma doesn't support distinct on specific fields easily with findMany for just that field
-      // We'll fetch all active products' brand and category (optimized)
-      const products = await prisma.product.findMany({
-        where: {
-          tenantId,
-          isActive: true
-        },
-        select: {
-          brand: true,
-          category: true
-        }
-      })
+      const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
+      const config = tenant?.config as any
 
-      const brands = products.map((p: any) => p.brand).filter(Boolean) as string[]
-      availableBrands = [...new Set(brands)] // Unique brands
+      // 1. Try Config
+      if (config?.allowed_brands && Array.isArray(config.allowed_brands)) {
+        availableBrands = config.allowed_brands
+      }
 
-      // Check if any products are jewelry (rings, necklaces, bracelets, earrings)
-      const jewelryCategories = ['rings', 'necklaces', 'bracelets', 'earrings', 'anel', 'colar', 'pulseira', 'brinco']
-      sellsJewelry = products.some((p: any) =>
-        jewelryCategories.includes(p.category?.toLowerCase())
-      )
+      // 2. Fallback to Catalog if config is empty/missing
+      if (availableBrands.length === 0) {
+        const products = await prisma.product.findMany({
+          where: { tenantId, isActive: true },
+          select: { brand: true, category: true }
+        })
+        const brands = products.map((p: any) => p.brand).filter(Boolean) as string[]
+        availableBrands = [...new Set(brands)]
+
+        // Also check jewelry
+        const jewelryCategories = ['rings', 'necklaces', 'bracelets', 'earrings', 'anel', 'colar', 'pulseira', 'brinco']
+        sellsJewelry = products.some((p: any) => jewelryCategories.includes(p.category?.toLowerCase()))
+      } else {
+        // If using config, we still need to check jewelry... 
+        // Let's just do a quick check for jewelry category in products anyway or add a config for it?
+        // For now, let's keep the product check for jewelry detection as it's separate from "Allowed Brands" for knowledge.
+        const productCount = await prisma.product.count({
+          where: {
+            tenantId,
+            isActive: true,
+            category: { in: ['rings', 'necklaces', 'bracelets', 'earrings', 'anel', 'colar', 'pulseira', 'brinco'] }
+          }
+        })
+        sellsJewelry = productCount > 0
+      }
+
     } catch (error) {
       availableBrands = []
       sellsJewelry = false
@@ -207,7 +226,7 @@ export async function buildRAGContext(
 
   // Step 5: Enrich with brand knowledge
   const productTitles = relevantProducts.map(p => p.title)
-  const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId)
+  const brandContext = await enrichWithBrandKnowledge(userMessage, productTitles, tenantId, availableBrands)
 
   // Step 6: Build system prompt with catalog context + brand knowledge + verification + jewelry + welcome + facts
   const systemPrompt = buildSystemPrompt(
@@ -221,7 +240,9 @@ export async function buildRAGContext(
     sellsJewelry,
     welcomeMessage,
     options.skipGreeting,
-    customerFacts
+    customerFacts,
+    customInstructions,
+    isFirstInteraction
   )
 
   return {
@@ -289,11 +310,13 @@ function buildSystemPrompt(
   sellsJewelry?: boolean,
   welcomeMessage?: string,
   skipGreeting?: boolean,
-  customerFacts?: string[]
+  customerFacts?: string[],
+  customInstructions?: string,
+  isFirstInteraction?: boolean
 ): string {
 
-  // Start with base instructions from config
-  let prompt = config.botInstructions
+  // Start with base instructions from config OR custom instructions
+  let prompt = customInstructions || config.botInstructions
 
   // Append dynamic context
   prompt += `\n\n[CONTEXT]\n`
@@ -322,6 +345,10 @@ function buildSystemPrompt(
   // Add conversation history
   if (conversationContext) {
     prompt += `\n[RECENT CONVERSATION]\n${conversationContext}\n`
+
+    if (conversationGapHours && conversationGapHours > 1 && conversationGapHours < 24) {
+      prompt += `\n[SYSTEM NOTE]: The user has returned after ${conversationGapHours.toFixed(1)} hours. Briefly welcome them back and summarize/resume the last topic naturally.\n`
+    }
   }
 
   // Add products
@@ -340,6 +367,15 @@ function buildSystemPrompt(
   // Add brand expertise context (if available)
   if (brandContext) {
     prompt += `\n[BRAND KNOWLEDGE]\n${brandContext}\n`
+  }
+
+  // Handle Welcome Message Logic (Memory)
+  if (isFirstInteraction && welcomeMessage) {
+    prompt += `\n[SYSTEM]: This is a new user. You MUST start your response with the exact welcome message below:\n"${welcomeMessage}"\n`
+  } else if (!isFirstInteraction && welcomeMessage) {
+    // Returning user: Explicitly DO NOT include the welcome message in the prompt to avoid repetition
+    // We can add a negative constraint if needed, but omitting it is usually enough.
+    prompt += `\n[SYSTEM]: Returning user. Do NOT use the standard welcome message. Answer directly and naturally.\n`
   }
 
   return prompt

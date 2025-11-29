@@ -235,12 +235,7 @@ export function getRiskScore(category: LegalRiskCategory, icd: number): number {
   return Math.round(icd * categoryWeights[category])
 }
 
-/**
- * Format legal risk for Airtable storage (single select field)
- */
-export function formatLegalRiskForAirtable(assessment: LegalRiskAssessment): string {
-  return assessment.label
-}
+
 
 /**
  * Get WhatsApp message template for owner based on risk

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect, buildFormula } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logError } from '@/lib/logger'
 
 /**
@@ -21,41 +21,42 @@ export async function GET() {
       return NextResponse.json({ error: 'No tenant context' }, { status: 403 })
     }
 
-    // Fetch all data in parallel
-    const [catalogItems, verifications, customers] = await Promise.all([
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+    const [totalProducts, verifications, activeCustomers] = await Promise.all([
       // Total products
-      atSelect('Catalog', {
-        filterByFormula: buildFormula('tenant_id', '=', tenantId),
+      prisma.product.count({
+        where: { tenantId, isActive: true }
       }),
 
       // Verifications (last 30 days)
-      atSelect('WatchVerify', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', IS_AFTER({created_at}, DATEADD(TODAY(), -30, 'days')))`,
+      prisma.watchVerify.findMany({
+        where: {
+          tenantId,
+          createdAt: { gte: thirtyDaysAgo }
+        },
+        select: { icd: true }
       }),
 
       // Active customers
-      atSelect('Customers', {
-        filterByFormula: buildFormula('tenant_id', '=', tenantId),
+      prisma.customer.count({
+        where: { tenantId }
       }),
     ])
 
-    // Calculate stats
-    const totalProducts = catalogItems.length
-    const totalVerifications = verifications.length
-
     // Calculate average ICD
     const icdScores = verifications
-      .map((v: any) => v.fields.icd)
-      .filter((icd: any) => typeof icd === 'number')
-    const avgICD = icdScores.length > 0
-      ? Math.round((icdScores.reduce((a: number, b: number) => a + b, 0) / icdScores.length) * 10) / 10
-      : 0
+      .map((v) => v.icd)
+      .filter((icd): icd is number => typeof icd === 'number')
 
-    const activeCustomers = customers.filter((c: any) => !c.fields.deleted_at).length
+    const avgICD = icdScores.length > 0
+      ? Math.round((icdScores.reduce((a, b) => a + b, 0) / icdScores.length) * 10) / 10
+      : 0
 
     return NextResponse.json({
       totalProducts,
-      totalVerifications,
+      totalVerifications: verifications.length,
       avgICD,
       activeCustomers,
     })

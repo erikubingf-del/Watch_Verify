@@ -7,7 +7,7 @@
 
 import { logError, logInfo } from './logger'
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY!
+
 const EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small'
 const EMBEDDING_DIMENSIONS = 1536 // text-embedding-3-small
 
@@ -25,12 +25,15 @@ export interface BatchEmbeddingResult {
  * Generate embedding for a single text
  */
 export async function generateEmbedding(text: string): Promise<EmbeddingResult> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error('OPENAI_API_KEY is not set')
+
   try {
     const response = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: EMBEDDING_MODEL,
@@ -61,6 +64,9 @@ export async function generateEmbedding(text: string): Promise<EmbeddingResult> 
  * Supports up to 2048 inputs per request
  */
 export async function generateBatchEmbeddings(texts: string[]): Promise<BatchEmbeddingResult> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error('OPENAI_API_KEY is not set')
+
   if (texts.length === 0) {
     return { embeddings: [], totalTokens: 0 }
   }
@@ -74,7 +80,7 @@ export async function generateBatchEmbeddings(texts: string[]): Promise<BatchEmb
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: EMBEDDING_MODEL,
@@ -169,15 +175,7 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
   return dotProduct / (magnitudeA * magnitudeB)
 }
 
-/**
- * Store embedding as base64 string (for Airtable storage)
- * Reduces storage size by ~30% vs JSON array
- */
-export function embeddingToBase64(embedding: number[]): string {
-  const buffer = new Float32Array(embedding)
-  const bytes = new Uint8Array(buffer.buffer)
-  return Buffer.from(bytes).toString('base64')
-}
+
 
 /**
  * Restore embedding from base64 string

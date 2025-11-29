@@ -109,12 +109,7 @@ export function validate<T>(schema: z.ZodSchema<T>, data: unknown): {
   }
 }
 
-/**
- * Sanitize string for Airtable formula injection prevention
- */
-export function sanitizeForFormula(value: string): string {
-  return value.replace(/'/g, "\\'").replace(/"/g, '\\"')
-}
+
 
 /**
  * Rate limit key generator

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atSelect } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,23 +19,27 @@ export async function GET() {
     const tenantId = session.user.tenantId
 
     // Fetch appointments
-    const appointments = await atSelect('Appointments', {
-      filterByFormula: `{tenant_id} = '${tenantId}'`,
-      sort: JSON.stringify([{ field: 'scheduled_at', direction: 'asc' }])
+    const appointments = await prisma.appointment.findMany({
+      where: { tenantId },
+      include: {
+        customer: true,
+        salesperson: true
+      },
+      orderBy: { scheduledAt: 'asc' }
     })
 
     // Map to frontend format
-    const visits = appointments.map((apt: any) => ({
+    const visits = appointments.map((apt) => ({
       id: apt.id,
-      customer_name: apt.fields.customer_name || '',
-      customer_phone: apt.fields.customer_phone || '',
-      scheduled_at: apt.fields.scheduled_at,
-      product_interest: apt.fields.product_interest || '',
-      assigned_salesperson: apt.fields.salesperson_name || null,
-      salesperson_id: apt.fields.salesperson_id ? apt.fields.salesperson_id[0] : null,
-      status: apt.fields.status || 'pending',
-      created_at: apt.fields.created_at,
-      notes: apt.fields.notes || '',
+      customer_name: apt.customer.name || '',
+      customer_phone: apt.customer.phone || '',
+      scheduled_at: apt.scheduledAt.toISOString(),
+      product_interest: (apt.metadata as any)?.product_interest || '',
+      assigned_salesperson: apt.salesperson.name || null,
+      salesperson_id: apt.salespersonId,
+      status: apt.status.toLowerCase(),
+      created_at: apt.createdAt.toISOString(),
+      notes: apt.notes || '',
     }))
 
     return NextResponse.json({

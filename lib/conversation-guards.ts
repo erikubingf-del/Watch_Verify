@@ -1,4 +1,4 @@
-import { atSelect } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 
 /**
  * Conversation Guards - Prevent AI from repeating greetings
@@ -26,16 +26,20 @@ export async function shouldSendGreeting(
   tenantId: string,
   phone: string
 ): Promise<boolean> {
-  const messages = await atSelect('Messages', {
-    filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${phone}', {direction}='outbound', {deleted_at}=BLANK())`,
-    sort: '[{"field":"created_at","direction":"desc"}]',
-    maxRecords: '1',
+  const lastMessage = await prisma.message.findFirst({
+    where: {
+      conversation: {
+        tenantId,
+        customer: { phone }
+      },
+      direction: 'OUTBOUND'
+    },
+    orderBy: { createdAt: 'desc' }
   })
 
-  if (messages.length === 0) return true // No previous messages - new customer
+  if (!lastMessage) return true // No previous messages - new customer
 
-  const lastMessage = messages[0].fields as any
-  const lastTime = new Date(lastMessage.created_at).getTime()
+  const lastTime = new Date(lastMessage.createdAt).getTime()
   const hoursSince = (Date.now() - lastTime) / (1000 * 60 * 60)
 
   // Only greet if it's been >2 hours
@@ -52,14 +56,19 @@ export async function getLastAIMessage(
   tenantId: string,
   phone: string
 ): Promise<string | null> {
-  const messages = await atSelect('Messages', {
-    filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${phone}', {direction}='outbound', {deleted_at}=BLANK())`,
-    sort: '[{"field":"created_at","direction":"desc"}]',
-    maxRecords: '1',
+  const lastMessage = await prisma.message.findFirst({
+    where: {
+      conversation: {
+        tenantId,
+        customer: { phone }
+      },
+      direction: 'OUTBOUND'
+    },
+    orderBy: { createdAt: 'desc' }
   })
 
-  if (messages.length === 0) return null
-  return (messages[0].fields as any).body || null
+  if (!lastMessage) return null
+  return lastMessage.content
 }
 
 /**
@@ -70,11 +79,15 @@ export async function hasConversationHistory(
   tenantId: string,
   phone: string
 ): Promise<boolean> {
-  const messages = await atSelect('Messages', {
-    filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${phone}', {direction}='outbound', {deleted_at}=BLANK())`,
-    sort: '[{"field":"created_at","direction":"desc"}]',
-    maxRecords: '1',
+  const count = await prisma.message.count({
+    where: {
+      conversation: {
+        tenantId,
+        customer: { phone }
+      },
+      direction: 'OUTBOUND'
+    }
   })
 
-  return messages.length > 0
+  return count > 0
 }

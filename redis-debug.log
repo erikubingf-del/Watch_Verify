@@ -1,0 +1,5 @@
+STARTING TEST
+Current directory: /Users/erikfigueiredo/Documents/GitHub/Watch_Verify
+REDIS_URL from env: redis://default:m6Nu5rq4QKsZglgnAP7PZWzye2yo3hlw@redis-15207.c308.sa-east-1-1.ec2.cloud.redislabs.com:15207
+Testing Redis connection...
+REDIS_URL masked: redis://default:****@redis-15207.c308.sa-east-1-1.ec2.cloud.redislabs.com:15207

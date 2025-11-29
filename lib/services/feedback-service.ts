@@ -11,7 +11,7 @@ import {
     createVisitRecord,
     generateFollowUpMessage,
 } from '@/lib/salesperson-feedback'
-import { atCreate } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { logError } from '@/lib/logger'
 import { sendWhatsAppMessage } from '@/lib/twilio'
 
@@ -175,12 +175,13 @@ export async function handleSalespersonFeedback(
 
             // Create new customer
             try {
-                await atCreate('Customers', {
-                    tenant_id: [tenantId],
-                    phone: formattedPhone,
-                    name: session.customerName || session.extractedData?.customer_name,
-                    created_at: new Date().toISOString(),
-                } as any)
+                await prisma.customer.create({
+                    data: {
+                        tenantId: tenantId,
+                        phone: formattedPhone,
+                        name: session.customerName || session.extractedData?.customer_name,
+                    }
+                })
 
                 await updateFeedbackSession(salespersonPhone, {
                     customerPhone: formattedPhone,

@@ -5,7 +5,7 @@
  * Fetches relevant brand information and conversation guidelines.
  */
 
-import { atSelect } from '@/utils/airtable'
+
 import { logInfo, logWarn } from './logger'
 
 export interface BrandKnowledgeRecord {
@@ -76,51 +76,63 @@ function extractBrandNames(text: string): string[] {
 }
 
 /**
- * Fetch brand knowledge from Airtable
+ * Fetch brand knowledge using RAG
  */
 export async function getBrandKnowledge(
   brandNames: string[],
   tenantId?: string
 ): Promise<BrandKnowledgeRecord[]> {
-  if (brandNames.length === 0) {
-    return []
+  if (brandNames.length === 0) return []
+
+  const { prisma } = await import('@/lib/prisma')
+  const { generateEmbedding } = await import('@/lib/embeddings')
+
+  const records: BrandKnowledgeRecord[] = []
+
+  // For each brand, search knowledge base
+  for (const brand of brandNames) {
+    try {
+      // Generate embedding for the brand name to find relevant docs
+      const { embedding } = await generateEmbedding(`Brand guide for ${brand}`)
+      const vectorQuery = `[${embedding.join(',')}]`
+
+      // Search logic:
+      // 1. Match similarity > 0.7
+      // 2. Filter by tenantId OR global (tenantId is null)
+      // 3. Prioritize tenant-specific content (we'll fetch top 3 and merge)
+
+      const results = await prisma.$queryRaw`
+        SELECT 
+          id, 
+          content, 
+          "tenantId", 
+          1 - (embedding <=> ${vectorQuery}::vector) as similarity
+        FROM knowledge_base
+        WHERE 
+          (1 - (embedding <=> ${vectorQuery}::vector) > 0.7)
+          AND ("tenantId" = ${tenantId} OR "tenantId" IS NULL)
+        ORDER BY similarity DESC
+        LIMIT 3
+      ` as any[]
+
+      if (results.length > 0) {
+        // Combine content from found records
+        const combinedContent = results.map(r => r.content).join('\n\n')
+
+        records.push({
+          id: results[0].id,
+          brand_name: brand,
+          history_summary: combinedContent.substring(0, 200) + '...', // Simple summary for now
+          key_selling_points: combinedContent, // Pass full content as selling points for context
+          active: true
+        })
+      }
+    } catch (error) {
+      logWarn('brand-knowledge', `Failed to fetch knowledge for ${brand}`, { error })
+    }
   }
 
-  try {
-    // Build filter formula to match any of the brand names
-    const brandFilters = brandNames.map(brand =>
-      `LOWER({brand_name})=LOWER('${brand.replace(/'/g, "\\'")}')`
-    )
-
-    const filterFormula = tenantId
-      ? `AND(OR(${brandFilters.join(',')}), {tenant_id}='${tenantId}', {active}=TRUE())`
-      : `AND(OR(${brandFilters.join(',')}), {active}=TRUE())`
-
-    const records = await atSelect<any>('BrandKnowledge', {
-      filterByFormula: filterFormula,
-    })
-
-    logInfo('brand-knowledge', 'Brand knowledge fetched', {
-      requestedBrands: brandNames,
-      foundRecords: records.length,
-    })
-
-    return records.map(record => ({
-      id: record.id,
-      brand_name: record.fields.brand_name,
-      history_summary: record.fields.history_summary,
-      key_selling_points: record.fields.key_selling_points,
-      technical_highlights: record.fields.technical_highlights,
-      target_customer_profile: record.fields.target_customer_profile,
-      conversation_vocabulary: record.fields.conversation_vocabulary,
-      price_positioning: record.fields.price_positioning,
-      must_avoid: record.fields.must_avoid,
-      active: record.fields.active,
-    }))
-  } catch (error: any) {
-    logWarn('brand-knowledge', `Failed to fetch brand knowledge: ${error.message}`)
-    return []
-  }
+  return records
 }
 
 /**
@@ -178,7 +190,8 @@ export function buildBrandContext(brandRecords: BrandKnowledgeRecord[]): string 
 export async function enrichWithBrandKnowledge(
   userMessage: string,
   productTitles: string[],
-  tenantId?: string
+  tenantId?: string,
+  allowedBrands?: string[]
 ): Promise<string> {
   // Extract brands from user message
   const brandsFromMessage = extractBrandNames(userMessage)
@@ -187,7 +200,15 @@ export async function enrichWithBrandKnowledge(
   const brandsFromProducts = productTitles.flatMap(title => extractBrandNames(title))
 
   // Combine and deduplicate
-  const allBrands = [...new Set([...brandsFromMessage, ...brandsFromProducts])]
+  let allBrands = [...new Set([...brandsFromMessage, ...brandsFromProducts])]
+
+  // Filter by allowed brands (if provided)
+  // This ensures we don't discuss brands the tenant doesn't carry
+  if (allowedBrands && allowedBrands.length > 0) {
+    allBrands = allBrands.filter(brand =>
+      allowedBrands.some(allowed => allowed.toLowerCase() === brand.toLowerCase())
+    )
+  }
 
   if (allBrands.length === 0) {
     return ''
