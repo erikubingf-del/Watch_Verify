@@ -47,11 +47,11 @@ export async function GET() {
 
     // Calculate average ICD
     const icdScores = verifications
-      .map((v) => v.icd)
-      .filter((icd): icd is number => typeof icd === 'number')
+      .map((v: any) => v.icd)
+      .filter((icd: any): icd is number => typeof icd === 'number')
 
     const avgICD = icdScores.length > 0
-      ? Math.round((icdScores.reduce((a, b) => a + b, 0) / icdScores.length) * 10) / 10
+      ? Math.round((icdScores.reduce((a: number, b: number) => a + b, 0) / icdScores.length) * 10) / 10
       : 0
 
     return NextResponse.json({
