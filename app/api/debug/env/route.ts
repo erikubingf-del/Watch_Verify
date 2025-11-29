@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * Diagnostic endpoint to check environment variables
  * REMOVE THIS IN PRODUCTION!

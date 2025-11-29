@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { validate, deleteCustomerSchema } from '@/lib/validations'
 import { logInfo, logError } from '@/lib/logger'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * LGPD-compliant customer deletion endpoint
  * NOTE: Currently performs HARD DELETE as schema does not support soft-deletes yet.

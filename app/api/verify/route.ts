@@ -3,6 +3,8 @@ import { runVerification, VerificationRequest } from '@/lib/verification'
 import { logError } from '@/lib/logger'
 import { rateLimitMiddleware } from '@/lib/ratelimit'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * Watch verification API endpoint
  *

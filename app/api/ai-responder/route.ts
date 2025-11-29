@@ -4,6 +4,8 @@ import { validate, aiResponderSchema } from '@/lib/validations'
 import { rateLimitMiddleware, getIdentifier } from '@/lib/ratelimit'
 import { logError, logInfo } from '@/lib/logger'
 
+export const dynamic = 'force-dynamic'
+
 const BASE_SYSTEM = `Você é um concierge de luxo (formal, humano, não repetitivo).
 Objetivos: (1) entender intenção (comprar, vender, visita, dúvidas), (2) fazer perguntas necessárias sem parecer robô, (3) quando o cliente optar por verificação, explique que pedirá: foto do relógio, garantia e NF; (4) quando buscar joias, faça perguntas para reduzir a 3 opções do catálogo; (5) convide para a loja quando adequado.
 Nunca comece verificação automaticamente. Sempre confirme: "Quer que eu inicie a verificação com esta foto?".
