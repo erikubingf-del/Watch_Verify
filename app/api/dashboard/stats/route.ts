@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logError } from '@/lib/logger'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/dashboard/stats
  * Returns dashboard statistics for the logged-in tenant
