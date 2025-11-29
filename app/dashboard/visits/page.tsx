@@ -27,6 +27,8 @@ interface Salesperson {
   working_hours?: string
 }
 
+export const dynamic = 'force-dynamic'
+
 export default function VisitsPage() {
   const [visits, setVisits] = useState<Visit[]>([])
   const [salespeople, setSalespeople] = useState<Salesperson[]>([])
@@ -75,8 +77,8 @@ export default function VisitsPage() {
     if (filters.status !== 'all' && v.status !== filters.status) return false
     if (filters.salesperson !== 'all' && v.salesperson_id !== filters.salesperson) return false
     if (filters.search &&
-        !v.customer_name.toLowerCase().includes(filters.search.toLowerCase()) &&
-        !v.customer_phone.includes(filters.search)) return false
+      !v.customer_name.toLowerCase().includes(filters.search.toLowerCase()) &&
+      !v.customer_phone.includes(filters.search)) return false
 
     // Date range filtering
     const visitDate = new Date(v.scheduled_at)
@@ -215,17 +217,15 @@ export default function VisitsPage() {
           <div className="flex bg-zinc-800 rounded-lg p-1">
             <button
               onClick={() => setViewMode('table')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
-              }`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                }`}
             >
               Tabela
             </button>
             <button
               onClick={() => setViewMode('calendar')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
-              }`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                }`}
             >
               Calendário
             </button>
@@ -467,7 +467,7 @@ export default function VisitsPage() {
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-w-2xl w-full p-6">
             <h2 className="text-xl font-bold text-white mb-4">Atribuir Vendedor</h2>
             <p className="text-sm text-zinc-400 mb-6">
-              Cliente: <span className="text-white font-medium">{selectedVisit.customer_name}</span><br/>
+              Cliente: <span className="text-white font-medium">{selectedVisit.customer_name}</span><br />
               Data: {new Date(selectedVisit.scheduled_at).toLocaleString('pt-BR')}
             </p>
 

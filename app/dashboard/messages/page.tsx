@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { formatDate, formatDateRelative } from '@/lib/dashboard-utils'
 
+export const dynamic = 'force-dynamic'
+
 export default function MessagesPage() {
   // Mock message data - in production would fetch from Airtable
   const [messages] = useState([

@@ -28,6 +28,8 @@ interface Verification {
   notes?: string
 }
 
+export const dynamic = 'force-dynamic'
+
 export default function VerificationDashboardPage() {
   const [verifications, setVerifications] = useState<Verification[]>([])
   const [loading, setLoading] = useState(true)
@@ -102,9 +104,9 @@ export default function VerificationDashboardPage() {
       if (filters.riskLevel === 'low' && v.legal_risk_color !== 'green') return false
     }
     if (filters.search &&
-        !v.customer.toLowerCase().includes(filters.search.toLowerCase()) &&
-        !v.brand.toLowerCase().includes(filters.search.toLowerCase()) &&
-        !v.model.toLowerCase().includes(filters.search.toLowerCase())) return false
+      !v.customer.toLowerCase().includes(filters.search.toLowerCase()) &&
+      !v.brand.toLowerCase().includes(filters.search.toLowerCase()) &&
+      !v.model.toLowerCase().includes(filters.search.toLowerCase())) return false
     return true
   })
 
@@ -516,11 +518,10 @@ export default function VerificationDashboardPage() {
                   </div>
                   <div className="w-full bg-zinc-700 rounded-full h-3 overflow-hidden">
                     <div
-                      className={`h-full transition-all ${
-                        selectedVerification.icd > 85 ? 'bg-green-500' :
-                        selectedVerification.icd >= 70 ? 'bg-yellow-500' :
-                        selectedVerification.icd >= 50 ? 'bg-orange-500' : 'bg-red-500'
-                      }`}
+                      className={`h-full transition-all ${selectedVerification.icd > 85 ? 'bg-green-500' :
+                          selectedVerification.icd >= 70 ? 'bg-yellow-500' :
+                            selectedVerification.icd >= 50 ? 'bg-orange-500' : 'bg-red-500'
+                        }`}
                       style={{ width: `${selectedVerification.icd}%` }}
                     />
                   </div>
@@ -532,18 +533,16 @@ export default function VerificationDashboardPage() {
               {selectedVerification.legal_risk_label && (
                 <div>
                   <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Avaliação de Risco Legal</h3>
-                  <div className={`rounded-lg p-6 border ${
-                    selectedVerification.legal_risk_color === 'green' ? 'bg-green-500/10 border-green-500/20' :
-                    selectedVerification.legal_risk_color === 'yellow' ? 'bg-yellow-500/10 border-yellow-500/20' :
-                    selectedVerification.legal_risk_color === 'orange' ? 'bg-orange-500/10 border-orange-500/20' :
-                    'bg-red-500/10 border-red-500/20'
-                  }`}>
-                    <p className={`text-lg font-bold mb-2 ${
-                      selectedVerification.legal_risk_color === 'green' ? 'text-green-400' :
-                      selectedVerification.legal_risk_color === 'yellow' ? 'text-yellow-400' :
-                      selectedVerification.legal_risk_color === 'orange' ? 'text-orange-400' :
-                      'text-red-400'
+                  <div className={`rounded-lg p-6 border ${selectedVerification.legal_risk_color === 'green' ? 'bg-green-500/10 border-green-500/20' :
+                      selectedVerification.legal_risk_color === 'yellow' ? 'bg-yellow-500/10 border-yellow-500/20' :
+                        selectedVerification.legal_risk_color === 'orange' ? 'bg-orange-500/10 border-orange-500/20' :
+                          'bg-red-500/10 border-red-500/20'
                     }`}>
+                    <p className={`text-lg font-bold mb-2 ${selectedVerification.legal_risk_color === 'green' ? 'text-green-400' :
+                        selectedVerification.legal_risk_color === 'yellow' ? 'text-yellow-400' :
+                          selectedVerification.legal_risk_color === 'orange' ? 'text-orange-400' :
+                            'text-red-400'
+                      }`}>
                       {selectedVerification.legal_risk_label}
                     </p>
 

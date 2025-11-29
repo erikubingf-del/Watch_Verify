@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { getICDColor, getICDBadge, formatDate } from '@/lib/dashboard-utils'
 
+export const dynamic = 'force-dynamic'
+
 export default function VerificationsPage() {
   // Mock verification data - in production would fetch from Airtable
   const [verifications] = useState([

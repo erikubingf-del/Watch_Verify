@@ -19,6 +19,8 @@ interface Conversation {
   last_interaction: string
 }
 
+export const dynamic = 'force-dynamic'
+
 export default function ConversationsPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,8 +56,8 @@ export default function ConversationsPage() {
     .filter(c => {
       if (filters.status !== 'all' && c.status !== filters.status) return false
       if (filters.search &&
-          !c.customer_name.toLowerCase().includes(filters.search.toLowerCase()) &&
-          !c.customer_phone.includes(filters.search)) return false
+        !c.customer_name.toLowerCase().includes(filters.search.toLowerCase()) &&
+        !c.customer_phone.includes(filters.search)) return false
       return true
     })
     .sort((a, b) => {

@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 
+export const dynamic = 'force-dynamic'
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState({
     // Tenant Settings
@@ -62,11 +64,10 @@ export default function SettingsPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
                   ? 'border-blue-500 text-blue-400'
                   : 'border-transparent text-zinc-400 hover:text-white'
-              }`}
+                }`}
             >
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
@@ -365,11 +366,10 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-zinc-400 capitalize">{user.role}</span>
-                  <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border ${
-                    user.status === 'active'
+                  <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border ${user.status === 'active'
                       ? 'bg-green-500/10 text-green-400 border-green-500/20'
                       : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
-                  }`}>
+                    }`}>
                     {user.status === 'active' ? 'Ativo' : 'Inativo'}
                   </span>
                   <button className="text-blue-400 hover:text-blue-300 text-sm">Editar</button>

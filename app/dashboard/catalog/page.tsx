@@ -19,6 +19,8 @@ interface Product {
   created_at: string
 }
 
+export const dynamic = 'force-dynamic'
+
 export default function CatalogManagementPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,8 +74,8 @@ export default function CatalogManagementPage() {
   const filteredProducts = products.filter(p => {
     if (filters.category !== 'all' && p.category !== filters.category) return false
     if (filters.search &&
-        !p.title.toLowerCase().includes(filters.search.toLowerCase()) &&
-        !p.brand.toLowerCase().includes(filters.search.toLowerCase())) return false
+      !p.title.toLowerCase().includes(filters.search.toLowerCase()) &&
+      !p.brand.toLowerCase().includes(filters.search.toLowerCase())) return false
     if (filters.embeddingStatus !== 'all' && p.embedding_status !== filters.embeddingStatus) return false
     if (filters.activeOnly && !p.active) return false
     return true
@@ -488,11 +490,10 @@ Omega Seamaster 300M,Omega,Relógio de mergulho profissional,45000,watches,https
                       })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border ${
-                        product.active
+                      <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border ${product.active
                           ? 'bg-green-500/10 text-green-400 border-green-500/20'
                           : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                      }`}>
+                        }`}>
                         {product.active ? 'Ativo' : 'Inativo'}
                       </span>
                     </td>
