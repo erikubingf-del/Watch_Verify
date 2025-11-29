@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     // Get verification counts and format
     const customersWithStats = await Promise.all(
-      customers.map(async (c) => {
+      customers.map(async (c: any) => {
         // Count verifications
         const verificationsCount = await prisma.watchVerify.count({
           where: {
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
         })
 
         // Calculate total messages
-        const messageCount = c.conversations.reduce((acc, conv) => acc + conv._count.messages, 0)
+        const messageCount = c.conversations.reduce((acc: number, conv: any) => acc + conv._count.messages, 0)
 
         // Get last activity
         const lastActivity = c.lastInteraction || c.createdAt
