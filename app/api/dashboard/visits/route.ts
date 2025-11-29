@@ -29,7 +29,7 @@ export async function GET() {
     })
 
     // Map to frontend format
-    const visits = appointments.map((apt) => ({
+    const visits = appointments.map((apt: any) => ({
       id: apt.id,
       customer_name: apt.customer.name || '',
       customer_phone: apt.customer.phone || '',
