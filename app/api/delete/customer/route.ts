@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { atSelect, atUpdate, buildFormula } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { validate, deleteCustomerSchema } from '@/lib/validations'
 import { logInfo, logError } from '@/lib/logger'
 
 /**
  * LGPD-compliant customer deletion endpoint
- * Soft-deletes customer and all related data (cascade)
+ * NOTE: Currently performs HARD DELETE as schema does not support soft-deletes yet.
+ * This effectively removes the customer and all related data.
  */
 export async function POST(req: NextRequest) {
   let phone: string | undefined
@@ -24,48 +25,67 @@ export async function POST(req: NextRequest) {
 
     phone = validation.data.phone
 
-    // Step 2: Find customer using safe formula
-    const formula = buildFormula('phone', '=', phone)
-    const customers = await atSelect('Customers', { filterByFormula: formula })
+    // Step 2: Find customer
+    // We search across all tenants for this phone number to ensure full cleanup
+    // or we could require tenantId. For now, we'll delete all instances of this phone.
+    const customers = await prisma.customer.findMany({
+      where: { phone: phone }
+    })
 
     if (!customers.length) {
       return NextResponse.json({ ok: true, deleted: 0, message: 'Customer not found' })
     }
 
-    const timestamp = new Date().toISOString()
     const deletedCount = {
       customers: 0,
       messages: 0,
       verifications: 0,
     }
 
-    // Step 3: Soft-delete customer records
-    await Promise.all(
-      customers.map(async (customer) => {
-        await atUpdate('Customers', customer.id, { deleted_at: timestamp } as any)
-        deletedCount.customers++
+    // Step 3: Delete data for each customer instance
+    for (const customer of customers) {
+      // 3a. Delete WatchVerifications
+      const verifications = await prisma.watchVerify.deleteMany({
+        where: { customerPhone: phone } // WatchVerify stores phone directly
       })
-    )
+      deletedCount.verifications += verifications.count
 
-    // Step 4: Cascade delete - soft-delete related Messages
-    const messages = await atSelect('Messages', { filterByFormula: formula })
-    await Promise.all(
-      messages.map(async (message) => {
-        await atUpdate('Messages', message.id, { deleted_at: timestamp } as any)
-        deletedCount.messages++
+      // 3b. Delete Messages (via Conversations)
+      // First find conversations
+      const conversations = await prisma.conversation.findMany({
+        where: { customerId: customer.id }
       })
-    )
 
-    // Step 5: Cascade delete - soft-delete related WatchVerify records
-    const verifications = await atSelect('WatchVerify', { filterByFormula: formula })
-    await Promise.all(
-      verifications.map(async (verification) => {
-        await atUpdate('WatchVerify', verification.id, { deleted_at: timestamp } as any)
-        deletedCount.verifications++
+      for (const conv of conversations) {
+        const msgs = await prisma.message.deleteMany({
+          where: { conversationId: conv.id }
+        })
+        deletedCount.messages += msgs.count
+      }
+
+      // Delete conversations themselves
+      await prisma.conversation.deleteMany({
+        where: { customerId: customer.id }
       })
-    )
 
-    // Step 6: Log the deletion for audit trail
+      // 3c. Delete Customer Memories
+      await prisma.customerMemory.deleteMany({
+        where: { customerId: customer.id }
+      })
+
+      // 3d. Delete Appointments
+      await prisma.appointment.deleteMany({
+        where: { customerId: customer.id }
+      })
+
+      // 3e. Delete Customer
+      await prisma.customer.delete({
+        where: { id: customer.id }
+      })
+      deletedCount.customers++
+    }
+
+    // Step 4: Log the deletion for audit trail
     logInfo('customer-deletion', `LGPD deletion completed for ${phone}`, deletedCount)
 
     return NextResponse.json({
@@ -75,7 +95,7 @@ export async function POST(req: NextRequest) {
         messages: deletedCount.messages,
         verifications: deletedCount.verifications,
       },
-      message: 'Customer and all related data soft-deleted successfully',
+      message: 'Customer and all related data deleted successfully (Hard Delete)',
     })
   } catch (e: any) {
     logError('customer-deletion', e, { phone })
