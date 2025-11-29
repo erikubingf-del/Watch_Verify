@@ -24,7 +24,7 @@ export async function GET() {
     })
 
     // Map to frontend format
-    const mapped = products.map((p) => ({
+    const mapped = products.map((p: any) => ({
       id: p.id,
       title: p.title,
       brand: p.brand || '',
