@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     })
 
     // Map to frontend format
-    const mapped = verifications.map((v) => {
+    const mapped = verifications.map((v: any) => {
       // Parse legal risk data if available
       let criticalIssues: string[] = []
       let warnings: string[] = []
