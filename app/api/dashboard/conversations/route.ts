@@ -38,7 +38,7 @@ export async function GET() {
       orderBy: { updatedAt: 'desc' }
     })
 
-    const conversations = conversationsData.map(conv => {
+    const conversations = conversationsData.map((conv: any) => {
       const lastMessage = conv.messages[0]
       const appointment = conv.customer.appointments[0]
 
@@ -58,7 +58,7 @@ export async function GET() {
 
       // If no AI summary, do a basic keyword check on recent messages
       if (!conv.summary && conv.messages.length > 0) {
-        const recentContent = conv.messages.map(m => m.content.toLowerCase()).join(' ')
+        const recentContent = conv.messages.map((m: any) => m.content.toLowerCase()).join(' ')
         const products = []
         if (recentContent.includes('submariner')) products.push('Submariner')
         if (recentContent.includes('daytona')) products.push('Daytona')
