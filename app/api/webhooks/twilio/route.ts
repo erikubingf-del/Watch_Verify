@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { atCreate, atSelect, atUpdate, buildFormula } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import { chat } from '@/utils/openai'
 import { validateTwilioRequest, createTwiMLResponse } from '@/lib/twilio'
 import { logError, logInfo } from '@/lib/logger'
@@ -32,7 +32,7 @@ import {
   generateCustomerSummary,
   generateStoreNotification,
 } from '@/lib/verification-report'
-import { calculateLegalRisk, formatLegalRiskForAirtable } from '@/lib/legal-risk'
+import { calculateLegalRisk } from '@/lib/legal-risk'
 import { calcICD } from '@/utils/icdCalculator'
 // Note: @/lib/rag, @/lib/scheduling, @/lib/salesperson-feedback use Prisma
 // and are imported dynamically at runtime to avoid build-time failures
@@ -62,7 +62,6 @@ async function getSalespersonFeedbackModule() {
 // Force dynamic rendering and increase timeout for webhook processing
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // 60 seconds for webhook processing
-// Updated: 2025-11-22 - Fixed Store Numbers table name
 
 /**
  * Upload media to Cloudinary for permanent storage
@@ -95,16 +94,14 @@ async function uploadToCloudinary(twilioMediaUrl: string): Promise<string> {
  */
 async function isEnhancedVerificationEnabled(tenantId: string): Promise<boolean> {
   try {
-    const settings = await atSelect('Settings', {
-      filterByFormula: buildFormula('tenant_id', '=', tenantId),
-      maxRecords: '1',
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId }
     })
 
-    if (settings.length === 0) {
-      return false
-    }
+    if (!tenant) return false
 
-    return settings[0].fields.verification_enabled === true
+    const config = tenant.config as any
+    return config.verification_enabled === true
   } catch (error: any) {
     logError('verification-settings-check', error)
     return false
@@ -116,16 +113,14 @@ async function isEnhancedVerificationEnabled(tenantId: string): Promise<boolean>
  */
 async function offersWatchPurchase(tenantId: string): Promise<boolean> {
   try {
-    const settings = await atSelect('Settings', {
-      filterByFormula: buildFormula('tenant_id', '=', tenantId),
-      maxRecords: '1',
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId }
     })
 
-    if (settings.length === 0) {
-      return false
-    }
+    if (!tenant) return false
 
-    return settings[0].fields.offers_purchase === true
+    const config = tenant.config as any
+    return config.offers_purchase === true
   } catch (error: any) {
     logError('purchase-settings-check', error)
     return false
@@ -137,28 +132,18 @@ async function offersWatchPurchase(tenantId: string): Promise<boolean> {
  */
 async function isSalesperson(tenantId: string, phone: string): Promise<boolean> {
   try {
-    // Check Users table
-    const users = await atSelect('Users', {
-      filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${phone}')`,
-      maxRecords: '1',
+    const user = await prisma.user.findFirst({
+      where: {
+        tenantId,
+        OR: [
+          { whatsapp: phone },
+          { phone: phone }
+        ],
+        role: 'SALESPERSON'
+      }
     })
 
-    if (users.length > 0) {
-      return true
-    }
-
-    // Check Salespeople table (if exists)
-    try {
-      const salespeople = await atSelect('Salespeople', {
-        filterByFormula: `AND({tenant_id}='${tenantId}', {phone}='${phone}')`,
-        maxRecords: '1',
-      })
-
-      return salespeople.length > 0
-    } catch {
-      // Salespeople table might not exist
-      return false
-    }
+    return !!user
   } catch (error: any) {
     logError('salesperson-check', error, { phone })
     return false
@@ -237,22 +222,19 @@ export async function POST(req: NextRequest) {
         from: from,
       })
 
-      const storeNumbers = await atSelect('Store Numbers', {
-        filterByFormula: buildFormula('Phone Number', '=', toNumber),
-        maxRecords: '1'
+      // Find tenant by WhatsApp number
+      // We check both exact match and potentially formatted versions if needed
+      // But for now, assume exact match on E.164
+      const tenant = await prisma.tenant.findFirst({
+        where: {
+          whatsappNumber: toNumber,
+          isActive: true
+        }
       })
 
-      logInfo('tenant-lookup-result', 'Store Numbers query result', {
-        found: storeNumbers.length,
-        hasRecords: storeNumbers.length > 0,
-        hasTenantField: storeNumbers.length > 0 ? !!storeNumbers[0].fields.Tenant : false,
-      })
-
-      if (storeNumbers.length > 0 && storeNumbers[0].fields.Tenant) {
-        // Tenant is a linked record (array), get first element
-        const tenantIds = storeNumbers[0].fields.Tenant as any
-        tenantId = Array.isArray(tenantIds) ? tenantIds[0] : tenantIds
-        logInfo('tenant-lookup', 'Tenant ID resolved', { phone: toNumber, tenantId })
+      if (tenant) {
+        tenantId = tenant.id
+        logInfo('tenant-lookup', 'Tenant resolved', { phone: toNumber, tenantId, name: tenant.name })
       } else {
         logError('tenant-lookup', new Error('No tenant found for phone number'), {
           phone: toNumber,
@@ -278,19 +260,61 @@ export async function POST(req: NextRequest) {
     }
 
     // At this point, tenantId is guaranteed to be non-null (early return above if null)
-    // TypeScript doesn't infer this, so we assert it
     const validTenantId: string = tenantId!
 
     // Step 4: Log message (Synchronous write to ensure we have it)
-    // In future, this could also be async, but for now we want to ensure it's saved
-    const messageRecord = await atCreate('Messages', {
-      tenant_id: [validTenantId],
-      phone: wa,
-      body,
-      direction: 'inbound',
-      media_url: mediaUrls[0] || null,
-      created_at: new Date().toISOString(),
-    } as any)
+    // We need to find or create the conversation first
+
+    // 4a. Find/Create Customer (Lightweight check)
+    // We do a full upsert in the worker, but we need an ID for the conversation here
+    let customer = await prisma.customer.findUnique({
+      where: {
+        tenantId_phone: {
+          tenantId: validTenantId,
+          phone: wa
+        }
+      }
+    })
+
+    if (!customer) {
+      customer = await prisma.customer.create({
+        data: {
+          tenantId: validTenantId,
+          phone: wa,
+          lastInteraction: new Date()
+        }
+      })
+    }
+
+    // 4b. Find/Create Conversation
+    // For now, we can just have one active conversation per customer
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: validTenantId,
+        customerId: customer.id,
+        status: 'ACTIVE'
+      }
+    })
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          tenantId: validTenantId,
+          customerId: customer.id,
+          status: 'ACTIVE'
+        }
+      })
+    }
+
+    // 4c. Create Message
+    const messageRecord = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        direction: 'INBOUND',
+        content: body,
+        mediaUrl: mediaUrls[0] || null,
+      }
+    })
 
     // Step 5: Push to Queue for Async Processing
     const { getWhatsAppQueue } = await import('@/lib/queue')
@@ -512,13 +536,19 @@ async function handleSalespersonFeedback(
       const formattedPhone = phone.startsWith('55') ? `+${phone}` : `+55${phone}`
 
       // Create new customer
+      // Create new customer
       try {
-        await atCreate('Customers', {
-          tenant_id: [tenantId],
-          phone: formattedPhone,
-          name: session.customer_name || session.extracted_data.customer_name,
-          created_at: new Date().toISOString(),
-        } as any)
+        await prisma.customer.create({
+          data: {
+            tenantId: tenantId,
+            phone: formattedPhone,
+            name: session.customer_name || session.extracted_data.customer_name,
+            lastInteraction: new Date(),
+            // Initialize empty profile
+            profile: {},
+            tags: ['new_lead']
+          }
+        })
 
         await updateFeedbackSession(salespersonPhone, {
           customerPhone: formattedPhone,
@@ -1015,26 +1045,28 @@ async function finalizeEnhancedVerification(customerPhone: string, tenantId: str
     // Store report in WatchVerify table
     const verificationId = session.id.substring(0, 8).toUpperCase()
 
-    await atCreate('WatchVerify', {
-      tenant_id: [tenantId],
-      customer: session.customerName,
-      phone: customerPhone,
-      cpf: session.cpf,
-      brand: photoAnalysis.brand || guaranteeAnalysis.brand || '',
-      model: photoAnalysis.model || guaranteeAnalysis.model || session.customerStatedModel || '',
-      reference: photoAnalysis.reference_number || guaranteeAnalysis.reference_number || '',
-      serial: photoAnalysis.serial_number || guaranteeAnalysis.serial_number || '',
-      icd: legalRisk.icd, // NEW: Store ICD score
-      status: legalRisk.color === 'red' ? 'rejected' : legalRisk.color === 'green' ? 'approved' : 'manual_review',
-      photo_url: session.watchPhotoUrl,
-      guarantee_url: session.guaranteeCardUrl,
-      invoice_url: session.invoiceUrl,
-      issues: JSON.stringify(legalRisk.criticalIssues), // Store as JSON
-      recommendations: JSON.stringify(legalRisk.warnings), // Store as JSON
-      notes: report,
-      created_at: session.createdAt,
-      completed_at: new Date().toISOString(),
-    } as any)
+    await prisma.watchVerify.create({
+      data: {
+        tenantId: tenantId,
+        customerName: session.customerName || 'Unknown',
+        customerPhone: customerPhone,
+        cpf: session.cpf,
+        brand: photoAnalysis.brand || guaranteeAnalysis.brand || null,
+        model: photoAnalysis.model || guaranteeAnalysis.model || session.customerStatedModel || null,
+        reference: photoAnalysis.reference_number || guaranteeAnalysis.reference_number || null,
+        serial: photoAnalysis.serial_number || guaranteeAnalysis.serial_number || null,
+        icd: legalRisk.icd,
+        status: legalRisk.color === 'red' ? 'rejected' : legalRisk.color === 'green' ? 'approved' : 'manual_review',
+        photoUrl: session.watchPhotoUrl,
+        guaranteeUrl: session.guaranteeCardUrl,
+        invoiceUrl: session.invoiceUrl,
+        issues: legalRisk.criticalIssues as any, // Store as JSON
+        recommendations: legalRisk.warnings as any, // Store as JSON
+        notes: report,
+        createdAt: new Date(session.createdAt),
+        completedAt: new Date(),
+      }
+    })
 
     // Send notification to store owner
     const storeNotification = generateStoreNotification(

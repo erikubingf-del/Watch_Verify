@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atCreate } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,19 +46,20 @@ export async function POST(req: NextRequest) {
       })
 
       try {
-        await atCreate('Catalog', {
-          tenant_id: [tenantId],
-          title: product.title || '',
-          brand: product.brand || '',
-          description: product.description || '',
-          price: parseFloat(product.price) || 0,
-          category: product.category || '',
-          image_url: product.image_url || '',
-          stock_quantity: parseInt(product.stock_quantity) || 0,
-          tags: product.tags || '',
-          active: true,
-          created_at: new Date().toISOString()
-        } as any)
+        await prisma.product.create({
+          data: {
+            tenantId,
+            title: product.title || 'Untitled',
+            brand: product.brand || '',
+            description: product.description || '',
+            price: parseFloat(product.price) || 0,
+            category: product.category || 'Uncategorized',
+            imageUrl: product.image_url || '',
+            stockQuantity: parseInt(product.stock_quantity) || 0,
+            tags: product.tags ? product.tags.split(',').map((t: string) => t.trim()) : [],
+            isActive: true,
+          }
+        })
 
         imported++
       } catch (error) {

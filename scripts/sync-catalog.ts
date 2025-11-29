@@ -9,29 +9,14 @@
  *   npm run sync-catalog --force   # Regenerate all embeddings
  */
 
-import { atSelect, atUpdate } from '@/utils/airtable'
+import { prisma } from '@/lib/prisma'
 import {
   generateBatchEmbeddings,
   prepareCatalogText,
-  embeddingToBase64,
   logEmbeddingOperation,
   calculateEmbeddingCost,
 } from '@/lib/embeddings'
-import { logInfo, logError, logWarn } from '@/lib/logger'
-
-interface CatalogRecord {
-  id: string
-  fields: {
-    tenant_id: string
-    title: string
-    description: string
-    category?: string
-    tags?: string[]
-    price?: number
-    embedding?: string
-    active: boolean
-  }
-}
+import { logInfo, logError } from '@/lib/logger'
 
 async function syncCatalog() {
   const startTime = Date.now()
@@ -44,17 +29,16 @@ async function syncCatalog() {
   }
 
   // Step 1: Fetch all active catalog items
-  const filterFormula = forceRegenerate
-    ? '{active}=TRUE()'
-    : 'AND({active}=TRUE(), {embedding}="")'
-
   console.log(`📥 Fetching catalog items...`)
 
   let records: any[]
   try {
-    records = await atSelect<CatalogRecord>('Catalog', {
-      filterByFormula: filterFormula,
-    }) as any
+    records = await prisma.product.findMany({
+      where: {
+        isActive: true,
+        ...(forceRegenerate ? {} : { embedding: null }) // Only fetch if embedding is null unless forced
+      }
+    })
   } catch (error: any) {
     console.error(`❌ Failed to fetch catalog: ${error.message}`)
     process.exit(1)
@@ -72,24 +56,24 @@ async function syncCatalog() {
   console.log('📝 Preparing texts...')
 
   const itemsToProcess: Array<{
-    record: CatalogRecord
+    record: any
     text: string
   }> = []
 
   for (const record of records) {
     try {
       const text = prepareCatalogText({
-        title: record.fields.title,
-        description: record.fields.description,
-        category: record.fields.category,
-        tags: record.fields.tags,
-        price: record.fields.price,
+        title: record.title,
+        description: record.description,
+        category: record.category,
+        tags: record.tags,
+        price: Number(record.price),
       })
 
       itemsToProcess.push({ record, text })
     } catch (error: any) {
       logError('prepare-catalog-text', error, { recordId: record.id })
-      console.log(`   ⚠️  Skipped ${record.fields.title}: ${error.message}`)
+      console.log(`   ⚠️  Skipped ${record.title}: ${error.message}`)
     }
   }
 
@@ -128,23 +112,32 @@ async function syncCatalog() {
 
       logEmbeddingOperation('batch-sync', batch.length, batchTokens, batchDuration)
 
-      // Step 4: Update Airtable records with embeddings
+      // Step 4: Update Prisma records with embeddings
       for (let i = 0; i < batch.length; i++) {
         const item = batch[i]
         const embedding = embeddings[i]
 
         try {
-          const embeddingBase64 = embeddingToBase64(embedding)
+          // Prisma vector extension expects specific format or raw SQL usually, 
+          // but if using pgvector with Prisma, we might need to use raw query or specific syntax.
+          // However, the schema says `embedding Unsupported("vector(1536)")?`.
+          // Prisma Client doesn't support writing to Unsupported types directly via `update`.
+          // We MUST use `$executeRaw` to update the embedding.
 
-          await atUpdate('Catalog', item.record.id, {
-            embedding: embeddingBase64,
-          })
+          // Format embedding as string for pgvector: '[0.1, 0.2, ...]'
+          const embeddingString = `[${embedding.join(',')}]`
+
+          await prisma.$executeRaw`
+            UPDATE products 
+            SET embedding = ${embeddingString}::vector
+            WHERE id = ${item.record.id}
+          `
 
           successCount++
         } catch (error: any) {
           logError('update-embedding', error, {
             recordId: item.record.id,
-            title: item.record.fields.title,
+            title: item.record.title,
           })
           failCount++
         }

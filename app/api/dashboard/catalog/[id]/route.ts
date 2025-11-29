@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atUpdate, atDelete } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,17 +21,20 @@ export async function PUT(
     const body = await req.json()
 
     // Update product
-    await atUpdate('Catalog', params.id, {
-      title: body.title,
-      brand: body.brand,
-      description: body.description,
-      price: body.price,
-      category: body.category,
-      image_url: body.image_url || '',
-      stock_quantity: body.stock_quantity || 0,
-      tags: Array.isArray(body.tags) ? body.tags.join(', ') : body.tags,
-      active: body.active !== false,
-    } as any)
+    await prisma.product.update({
+      where: { id: params.id },
+      data: {
+        title: body.title,
+        brand: body.brand,
+        description: body.description,
+        price: body.price,
+        category: body.category,
+        imageUrl: body.image_url || null,
+        stockQuantity: body.stock_quantity || 0,
+        tags: Array.isArray(body.tags) ? body.tags : (body.tags ? body.tags.split(',').map((t: string) => t.trim()) : []),
+        isActive: body.active !== false,
+      }
+    })
 
     return NextResponse.json({ success: true })
 
@@ -58,7 +61,9 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    await atDelete('Catalog', params.id)
+    await prisma.product.delete({
+      where: { id: params.id }
+    })
 
     return NextResponse.json({ success: true })
 

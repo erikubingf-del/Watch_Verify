@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { atUpdate, atGet } from '@/lib/airtable'
+import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,15 +25,22 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Get salesperson name
-    const salesperson = await atGet('Salespeople', salespersonId)
-    const salespersonName = salesperson?.fields?.name || 'Vendedor'
+    // Verify salesperson exists
+    const salesperson = await prisma.user.findUnique({
+      where: { id: salespersonId }
+    })
+
+    if (!salesperson) {
+      return NextResponse.json({ error: 'Salesperson not found' }, { status: 404 })
+    }
 
     // Update appointment with salesperson
-    await atUpdate('Appointments', visitId, {
-      salesperson_id: [salespersonId],
-      salesperson_name: salespersonName,
-    } as any)
+    await prisma.appointment.update({
+      where: { id: visitId },
+      data: {
+        salespersonId: salespersonId
+      }
+    })
 
     return NextResponse.json({ success: true })
 
