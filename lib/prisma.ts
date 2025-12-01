@@ -12,11 +12,13 @@ const isAccelerate = url?.startsWith('prisma://')
 
 const baseClient = new PrismaClient({
     log: ['query', 'error', 'warn'],
-    datasources: {
-        db: {
-            url
+    ...(url ? {
+        datasources: {
+            db: {
+                url
+            }
         }
-    }
+    } : {})
 })
 
 export const prisma = globalForPrisma.prisma ||
